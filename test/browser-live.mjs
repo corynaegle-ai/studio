@@ -294,7 +294,7 @@ try {
   const hostCtl = `(async () => { const src = document.querySelector('script[type="module"][src*="/assets/apps/"]').src; return (await import(new URL('host.js', src).href)).getHost({ app: 'cadcraft' }).control; })()`;
   await A.evaluate(async (expr) => {
     const ctl = await eval(expr);
-    ctl.configure({ enabled: true, groups: ['read', 'edit'] });
+    ctl.configure({ enabled: true, groups: ['read', 'edit'], rules: null });
     await ctl.handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', clientInfo: { name: 'test-assistant', version: '1' }, capabilities: {} } }, { id: 'sess-1' });
   }, hostCtl);
   await until(B, () => document.querySelector('[data-live-assistant]') && document.querySelector('[data-live-assistant]').textContent.includes('May'), null, 'the assistant row at the joiner, with what it may do', 8000);
@@ -310,8 +310,8 @@ try {
   const call = (p, sid, id, name, args) => p.evaluate(async ([expr, sid, id, name, args]) => {
     const ctl = await eval(expr);
     const r = await ctl.handle({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }, sid);
-    return r && r.result && !r.result.isError;
-  }, [hostCtl, sid, id, name, args]);
+    return JSON.stringify(r);
+  }, [hostCtl, sid, id, name, args]).then((j) => { if (process.env.DBG) console.log('  RESULT', String(j).slice(0, 600)); const r = JSON.parse(j || 'null'); return !!(r && r.result && !r.result.isError); });
   ok(await call(A, { id: 'sess-1' }, 2, 'command_run', { input: ['LINE', '300,300', '340,330', ''] }), 'the assistant draws a line (command_run)');
   await until(B, () => [...window.cadcraft.doc.model.values()].some((e) => e.type === 'line' && e.x1 === 300 && e.y1 === 300), null, 'the assistant\'s line at the joiner');
   ok(await B.evaluate(() => [...window.cadcraft.doc.model.values()].some((e) => e.type === 'line' && e.x1 === 300 && e.y1 === 300)), 'its line reaches the joiner');
@@ -323,7 +323,7 @@ try {
   // an editor's assistant: approved by the host separately
   await B.evaluate(async (expr) => {
     const ctl = await eval(expr);
-    ctl.configure({ enabled: true, groups: ['read', 'edit'] });
+    ctl.configure({ enabled: true, groups: ['read', 'edit'], rules: null });
     await ctl.handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', clientInfo: { name: 'ben-helper', version: '1' }, capabilities: {} } }, { id: 'sess-b' });
   }, hostCtl);
   await until(A, () => document.querySelector('[data-live-card-assistant]'), null, 'the host\'s card for Ben\'s assistant', 8000);
@@ -395,14 +395,19 @@ try {
       return { status: 404, json: {} };
     };
   });
-  await A.selectOption('[data-live-lifetime]', '1h');
+  // DEC-7: the default (1 hour, or the host's Studio Settings choice) is pre-picked; Link options changes it for this link.
+  ok(await A.inputValue('[data-live-lifetime]') === '1h' && !(await A.evaluate(() => document.querySelector('[data-live-link-options]').open)),
+    'Link options start closed, with the default lifetime of 1 hour picked');
+  await A.click('[data-live-link-options] > summary');
+  await A.selectOption('[data-live-lifetime]', '8h');
+  ok(/8/.test(await A.textContent('[data-live-lifetime-summary]')), 'the Link options line says the lifetime picked for this link');
   await A.click('[data-live-makelink]');
   await until(A, () => document.querySelector('[data-live-link]'), null, 'the link');
   const link = await A.inputValue('[data-live-link]');
   ok(/^https:\/\/getcadcraft\.com\/live\/K7QX9M2B#[A-Za-z0-9_-]{22}$/.test(link), 'the invite link: room + a 128-bit secret in the fragment');
   const calls = await A.evaluate(() => window.__cloudCalls);
   const roomCall = calls.find((c) => c[1] === '/api/v1/live/rooms');
-  ok(roomCall && JSON.parse(roomCall[2]).lifetime === '1h' && JSON.parse(roomCall[2]).app === 'cadcraft', 'the room is opened for this app with the chosen lifetime');
+  ok(roomCall && JSON.parse(roomCall[2]).lifetime === '8h' && JSON.parse(roomCall[2]).app === 'cadcraft', 'the room is opened for this app with the lifetime picked for this link');
   ok(!JSON.stringify(calls).includes(link.split('#')[1]), 'the secret never goes to getcadcraft.com');
   const llog = await A.evaluate(() => window.__liveLog);
   ok(llog.some((l) => l[0] === 'relay' && l[1].endsWith('/host/K7QX9M2B') && l[2]) && llog.some((l) => l[0] === 'advertise' && l[1] && l[1].room === 'K7QX9M2B'), 'the host connects to the relay with its ticket and is findable on the LAN by the room (LV.26)');

@@ -167,7 +167,22 @@ section('What the panels show');
   ok(V.relayLine({ state: 'license', ok: false }).noNewLink === true && V.relayLine({ state: 'closed', code: 4005 }).linkDead && V.relayLine({ state: 'ready', license_ok: true }).key === 'window.live.relay.ready' && V.relayLine({ state: '?' }) === null, 'relay notices');
   ok(V.initials('ana maría lópez') === 'AL' && V.initials('ben') === 'B' && V.initials('') === '?' && V.initials('  ') === '?', 'initials');
   ok(V.layerFor(1) !== V.layerFor(2) && V.LAYERS.includes(V.layerFor(-3)), 'a colour per person');
-  ok(V.LIFETIMES.filter((x) => x.default).map((x) => x.key).join() === '8h', 'links last 8 hours unless the host picks (spec § 13.7, recommended)');
+  ok(V.LIFETIMES.filter((x) => x.default).map((x) => x.key).join() === '1h' && V.DEFAULT_LIFETIME === '1h', 'links last 1 hour unless the host picks (owner DEC-7, 2026-10-25)');
+  {
+    const mem = new Map(); const st = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
+    ok(V.linkLifetime(st) === '1h' && V.linkLifetime(null) === '1h', 'no setting: the default lifetime');
+    V.setLinkLifetime(st, '8h');
+    ok(V.linkLifetime(st) === '8h' && mem.get(V.LINK_LIFETIME_KEY) === '8h', 'Studio Settings: a default of 8 hours is kept');
+    V.setLinkLifetime(st, 'end');
+    ok(V.linkLifetime(st) === 'end', 'until the host ends: kept');
+    mem.set(V.LINK_LIFETIME_KEY, '99h');
+    ok(V.linkLifetime(st) === '1h', 'an unknown stored value falls back to the default');
+    V.setLinkLifetime(st, '1h');
+    ok(!mem.has(V.LINK_LIFETIME_KEY), 'choosing the default clears the setting');
+    const thrower = { getItem() { throw new Error('private'); }, setItem() { throw new Error('private'); }, removeItem() { throw new Error('private'); } };
+    V.setLinkLifetime(thrower, '8h');
+    ok(V.linkLifetime(thrower) === '1h', 'private mode: no crash, the default');
+  }
   const e = I.expiresIn(1000 + 9 * 60000 + 5000, 1000);
   ok(e.minutes === 9 && e.seconds === 5 && !e.over && I.expiresIn(0, 5).over, 'the countdown');
 }

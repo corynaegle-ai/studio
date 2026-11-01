@@ -13,7 +13,9 @@
  *   refuseKey(reason)        → window.live.refused.* key for a refused edit
  *   relayLine(b)             → { key, vars, linkDead }   the host's relay socket (`relay` notices, LIVE-PROTOCOL § 4.5)
  *   initials(name), colorIndex(c)   the person's initials and one of eight layer colours (no picture: guests, SI.8)
- *   LIFETIMES                → the invite link's lifetimes (spec § 9): 1h, 8h (default, decision 13.7 recommended), end
+ *   LIFETIMES                → the invite link's lifetimes (spec § 9): 1h (default, owner DEC-7 2026-10-25), 8h, end
+ *   linkLifetime(storage)    → the host's default lifetime key from Studio Settings (LINK_LIFETIME_KEY), else the default
+ *   setLinkLifetime(storage, key) → saves it ('' or an unknown key = back to the default)
  *   editRows(client, opts)   → the edit log's rows (0.6 DC.23): [{ q, c, self, name, assistant: null | { of, ofName, self },
  *                              label, count, age: { key, vars }, gap }], newest first; opts { limit, keys, now }
  *   editRow(client, entry, now) → one such row from a LiveClient.editLog() / lastEdit() entry
@@ -21,7 +23,24 @@
  */
 
 export const ROLES = ['editor', 'viewer'];
-export const LIFETIMES = [{ key: '1h', word: 'window.live.link.1h' }, { key: '8h', word: 'window.live.link.8h', default: true }, { key: 'end', word: 'window.live.link.end' }];
+export const LIFETIMES = [{ key: '1h', word: 'window.live.link.1h', default: true }, { key: '8h', word: 'window.live.link.8h' }, { key: 'end', word: 'window.live.link.end' }];
+/** localStorage key the hub's Settings and every app window share (one origin): the default lifetime of a new invite link. */
+export const LINK_LIFETIME_KEY = 'cc-live-link-lifetime';
+export const DEFAULT_LIFETIME = LIFETIMES.find((x) => x.default).key;
+
+export function linkLifetime(storage) {
+  let v = null;
+  try { v = storage ? storage.getItem(LINK_LIFETIME_KEY) : null; } catch { /* private mode */ }
+  return LIFETIMES.some((x) => x.key === v) ? v : DEFAULT_LIFETIME;
+}
+
+export function setLinkLifetime(storage, key) {
+  try {
+    if (!storage) return;
+    if (LIFETIMES.some((x) => x.key === key) && key !== DEFAULT_LIFETIME) storage.setItem(LINK_LIFETIME_KEY, key);
+    else storage.removeItem(LINK_LIFETIME_KEY);
+  } catch { /* private mode */ }
+}
 export const LAYERS = ['red', 'blue', 'orange', 'magenta', 'ochre', 'green', 'violet', 'cyan'];
 
 const clean = (s, max = 60) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -89,7 +108,7 @@ export function canHandOver(row) {
 }
 
 export function refuseKey(reason) {
-  const known = ['held', 'changed', 'role', 'schema', 'locked', 'invalid', 'deleted', 'flood'];
+  const known = ['held', 'changed', 'role', 'schema', 'locked', 'invalid', 'deleted', 'flood', 'scope-sheet', 'scope-area', 'scope-unknown'];
   return 'window.live.refused.' + (known.includes(reason) ? reason : 'other');
 }
 

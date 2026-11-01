@@ -77,6 +77,18 @@ final class AppBuilds
     /** Hardware specs from the six apps without lib/compute (0.7 HW.2), as the site's AppBuilds::hardware. */
     public const HARDWARE_SCRIPT = '/assets/js/app-hardware.js';
     public static function hardware(array $build): bool { return ($build['manifest']['hardware'] ?? false) === true; }
+    // The shell's later opt-in modules (propgrid 0.7, problems 0.8, devices 0.8 Track ID, extras 0.8 R2.10): the packed suite does not carry them
+    // (studio_PART_2, 2026-10-28: without these four the dev pack stops at app-shell.inc with "undefined method AppBuilds::propgrid").
+    public const PROPGRID_SCRIPT = '/assets/js/app-propgrid.js';
+    public const PROPGRID_CSS = '/assets/css/app-propgrid.css';
+    public static function propgrid(array $build): bool { return ($build['manifest']['propgrid'] ?? false) === true; }
+    public static function problems(array $build): bool { return false; }
+    public const DEVICES_SCRIPT = '/assets/js/app-devices-ui.js';
+    public static function devices(array $build): bool { return ($build['manifest']['devices'] ?? false) === true; }
+    public const EXTRA_KEYS = ['calc', 'reasons', 'totals', 'lessons', 'ai-suggest', 'ai-activity', 'ai-ask', 'access', 'fields'];
+    public const EXTRA_CSS = '/assets/css/app-tools.css';
+    public static function extras(array $build): array { return array_values(array_filter(self::EXTRA_KEYS, fn($k) => ($build['manifest'][$k] ?? false) === true)); }
+    public static function extraScript(string $key): string { return '/assets/js/app-' . $key . '.js'; }
     /** Workspace layouts (0.7 WS.6), as the site's AppBuilds::workspaces / workspaceAdapter / hasWorkspaces / workspaceConfig. */
     public const WORKSPACE_BUILTINS = ['docked', 'toolbox'];
     public const WORKSPACE_MODULES = ['/assets/js/app-workspace.js', '/assets/js/app-workspace-format.js', '/assets/js/app-workspace-popout.js', '/assets/js/app-workspace-input.js', '/assets/js/app-workspace-extras.js', '/assets/js/app-workspace-arrange.js', '/assets/js/i18n.js'];

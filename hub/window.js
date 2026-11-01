@@ -8,9 +8,13 @@
  *   and add-ons that want it (optional: an app that never reads it works the same).
  * - Puts a "Studio" button in the app bar: back to the hub in one click (desktop: the hub window; browser: the hub's tab).
  * - Answers the hub's "window.focus" message where the platform allows it.
+ * - Drag between apps (0.8 EG.78): `window.cadcraftStudio.drag` (window-drag.js).
+ * - Send to a machine (0.8 EG.40): `window.cadcraftStudio.machines.send({ name, bytes, device })` (machines-ui.js; null outside desktop Studio).
  * Words: #studio-window-lang (the packer embeds the few strings, from hub/lang/<locale>.json "window.*").
  */
 import { openChannel, windowId } from './channel.js';
+import { createDrag } from './window-drag.js';
+import { sendDialog } from './machines-ui.js';
 
 const desk = window.cadcraftDesktop || null;
 const app = (document.querySelector('script#cc-edition') && JSON.parse(document.querySelector('script#cc-edition').textContent || '{}').app) || 'app';
@@ -41,7 +45,25 @@ async function start() {
       location.href = hubUrl;
     }
   };
-  Object.defineProperty(window, 'cadcraftStudio', { value: Object.freeze({ id: ch.id, app, post: ch.post, on: ch.on, hub }), enumerable: true });
+  // EG.78: drag between apps (drag.js, window-drag.js): window.cadcraftStudio.drag.start / offer / accept
+  const fillWords = (s, v = {}) => String(s).replace(/\{(\w+)\}/g, (m, k) => (v[k] === undefined ? m : v[k]));
+  const drag = createDrag({ doc: document, win: window, channel: ch, app, T: (k) => T(k, k), fill: fillWords });
+  // EG.40: "Send to a machine…" — window.cadcraftStudio.machines.send({ name, bytes, device? }) opens the dialog (desktop Studio only; null elsewhere)
+  const machines = desk && desk.machines ? Object.freeze({ send: (o = {}) => sendDialog({ doc: document, T: (k) => T(k, k), desk, name: String(o.name || ''), bytes: o.bytes, device: o.device || null }) }) : null;
+  // EG.40 (part-model_PART_4): the one call the apps make, `window.ccSendToMachine({ app, kind, files: [{ name, bytes }], note }) → Promise<{ ok, sent, cancelled?, error? }>`.
+  // kind 'gcode' = a CNC / laser / printer program (the dialog lists every machine), 'nc1' = a steel-fabrication NC set (CNC machines only, never a printer).
+  // Several files go to the one machine picked in one dialog. A program is uploaded, never started from here unless a printer is confirmed in the dialog.
+  if (desk && desk.machines) {
+    const sendToMachine = async (o = {}) => {
+      const files = (Array.isArray(o.files) ? o.files : []).filter((f) => f && typeof f.name === 'string' && f.bytes instanceof Uint8Array && f.bytes.length);
+      if (!files.length) return { ok: false, sent: 0, error: 'no files' };
+      const r = await sendDialog({ doc: document, T: (k) => T(k, k), desk, files, device: o.kind === 'nc1' ? 'cnc' : null });
+      if (!r) return { ok: false, sent: 0, cancelled: true };
+      return { ok: true, sent: r.sent ?? files.length, started: !!r.started };
+    };
+    Object.defineProperty(window, 'ccSendToMachine', { value: sendToMachine, enumerable: true, configurable: true });
+  }
+  Object.defineProperty(window, 'cadcraftStudio', { value: Object.freeze({ id: ch.id, app, post: ch.post, on: ch.on, hub, drag, machines }), enumerable: true });
   ch.on('window.focus', () => { try { window.focus(); } catch { /* the browser decides */ } });
   window.addEventListener('pagehide', () => ch.close());
   new MutationObserver(() => { ch.title = document.title; }).observe(document.querySelector('title') || document.head, { childList: true, subtree: true, characterData: true });

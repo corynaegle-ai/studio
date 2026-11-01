@@ -24,6 +24,11 @@
  *   while it is connected; the window's edits made during its calls go on it. The people list shows it under its person,
  *   "Assistant (via Ana)"; the host's card asks "Ana's assistant…". Denied or removed: the assistant is disconnected here.
  *
+ *   EG.41: the person can give an assistant a sheet or area ("Give it what I'm looking at"; assistant-scope.js): a step
+ *   outside it is taken back on the assistant's client; its cursor shows where it works (its own presence); each call it makes
+ *   is tagged `live` ({session, as, sheet, area, at}) in host.control.log, the activity log. Needs the app's adapter to name
+ *   where a step lands (`adapter.where`); without it the people list says the scope can't be held.
+ *
  * - Edit log (0.6 DC.23): "Recent edits" — who changed what, newest first, from the commits this window applied
  *   (LiveClient.editLog); with something selected in an app whose adapter names its selection (`selectionKeys()`), who
  *   changed it last and "Only what is selected". Memory only, for this session; the panel says so.
@@ -34,8 +39,9 @@
  */
 import { fill, choosePlural } from '../../assets/js/i18n.js';
 import { parseJoin, lanUrl, socketUrl, relayJoinUrl, urlHost, inviteLink, newLinkSecret, linkSecretBytes, expiresIn, JoinStore } from './invite.js';
-import { peopleRows, joinCard, statusLine, endLine, refuseKey, relayLine, initials, layerFor, canHandOver, LIFETIMES, editRows, editRow } from './view.js';
+import { peopleRows, joinCard, statusLine, endLine, refuseKey, relayLine, initials, layerFor, canHandOver, LIFETIMES, linkLifetime, editRows, editRow } from './view.js';
 import { qrMatrix, qrSvgPath } from './qr.js';
+import { makeScope, scopeable, describe as describeScope, guardAssistant, presenceFor, liveLogFields, tagEntry } from './assistant-scope.js';
 import { decodesAsImage } from '../avatar.js';
 
 const LS_NAME = 'cadcraft.studio.live.name';
@@ -104,6 +110,9 @@ export async function startLive({ doc = document, win = window, desk = win.cadcr
     joinRec: null, endInfo: null, msg: '', msgKind: 'info',
     file: '', adapter: null,
     assistants: new Map(),                 // LV.18: control session id → its LiveClient (null: asking, or none to be had)
+    lastTool: new Map(),                   // EG.41: control session id → the tool it called last
+    scopes: new Map(),                     // EG.41: control session id → the sheet / area it was given (assistant-scope.js makeScope)
+    idle: new Map(),                       // EG.41: control session id → timer that ends 'working' on its cursor
     limitAsk: false,                       // DEC-2-5: the host chose "Allow more people…" and sees the cost first
     relayMax: 0,                           // the invite link service's own joiner cap for our room (0 = none)
     editsAll: false, editsSel: false,      // DC.23: the edit log shows more / only what is selected
@@ -295,7 +304,7 @@ export async function startLive({ doc = document, win = window, desk = win.cadcr
     if (r.status !== 201 || !data.room || !data.host_ticket) return done(String((r.json && r.json.message) || T('window.live.link.refused')));
     const room = data.room;
     const secret = newLinkSecret();
-    const ttl = LINK_TTL[lifetime] || LINK_TTL['8h'];
+    const ttl = LINK_TTL[lifetime] || LINK_TTL[linkLifetime(null)];
     st.client.addLink(room.room, linkSecretBytes(secret), room.room, { oneTime, ttl });
     try { await live.relay(room.relay_url, data.host_ticket); } catch { st.client.stopInviting(room.room); return done(T('window.live.link.relayfailed')); }
     if (live.advertise) live.advertise({ room: room.room }, { app: slug }).catch(() => {});   // LV.26: same network first
@@ -314,13 +323,14 @@ export async function startLive({ doc = document, win = window, desk = win.cadcr
     const r1 = await site('GET', '/api/v1/live/check?app=' + encodeURIComponent(slug)).catch(() => null);
     const ck = r1 && r1.json ? (r1.json.data || r1.json) : null;
     if (!r1 || r1.status !== 200 || !ck || !ck.allowed) return null;
-    const r2 = await site('POST', '/api/v1/live/rooms', { app: slug, lifetime: '8h' }).catch(() => null);
+    const lifetime = linkLifetime(win.localStorage);   // the host's default from Studio Settings
+    const r2 = await site('POST', '/api/v1/live/rooms', { app: slug, lifetime }).catch(() => null);
     const data = r2 && r2.json && r2.json.data ? r2.json.data : null;
     if (!r2 || r2.status !== 201 || !data || !data.room || !data.host_ticket) return null;
     const room = data.room;
     try { await live.relay(room.relay_url, data.host_ticket); } catch { return null; }
     const secret = newLinkSecret();
-    st.pendingLink = { room: room.room, secret, url: inviteLink(room.room, secret), lifetime: '8h', oneTime: false, ttl: LINK_TTL['8h'], expires: room.expires_at || null };
+    st.pendingLink = { room: room.room, secret, url: inviteLink(room.room, secret), lifetime, oneTime: false, ttl: LINK_TTL[lifetime], expires: room.expires_at || null };
     return room.room;
   }
 
@@ -539,6 +549,7 @@ export async function startLive({ doc = document, win = window, desk = win.cadcr
       st.controlHooked = true;
       host.control.on('change', () => { const cl = st.client; if (cl && !cl.final) { cl.setPresence(cl.lastPresence || {}); assistantClients(); render(); } });
       host.control.on('disconnect', ({ id } = {}) => assistantGone(id));
+      host.control.on('call', tagCall);
     }
     // Once a second while the panel is open: the code's countdown, and the people list when someone's assistant came or went
     // (presence reaches only the adapter's drawPresence, so it is compared here).
@@ -686,7 +697,7 @@ export async function startLive({ doc = document, win = window, desk = win.cadcr
         }, '', { 'data-live-copylink': true }),
         btn(T('window.live.link.new'), renewLink, 'sl-btn-line', { disabled: st.noNewLink, 'data-live-newlink': true }),
         btn(T('window.live.link.stop'), stopLink, 'sl-btn-line', { 'data-live-stoplink': true })),
-      el('p', { class: 'sl-hint' }, T(st.link.oneTime ? 'window.live.link.how.onetime' : 'window.live.link.how', { lifetime: T((LIFETIMES.find((x) => x.key === st.link.lifetime) || LIFETIMES[1]).word) })));
+      el('p', { class: 'sl-hint' }, T(st.link.oneTime ? 'window.live.link.how.onetime' : 'window.live.link.how', { lifetime: T((LIFETIMES.find((x) => x.key === st.link.lifetime) || LIFETIMES.find((x) => x.default)).word) })));
     } else if (!st.linkCheck || st.linkCheck.state === 'checking') {
       if (!st.linkCheck) checkLink();
       kids.push(el('p', { class: 'sl-hint', 'data-live-linkcheck': 'checking' }, T('window.live.link.checking')));
@@ -696,12 +707,20 @@ export async function startLive({ doc = document, win = window, desk = win.cadcr
         el('p', { class: 'sl-hint' }, T('window.live.link.usecode')));
       if (st.linkCheck.state === 'no') kids.push(el('p', {}, el('a', { href: 'https://getcadcraft.com/pricing', target: '_blank', rel: 'noopener', 'data-live-pricing': true }, T('window.live.link.pricing'))));
     } else {
+      // DEC-7: the default comes from Studio Settings (Invite links); Link options changes it for this one link.
+      const dflt = linkLifetime(win.localStorage);
+      const word = (k) => T((LIFETIMES.find((x) => x.key === k) || LIFETIMES.find((x) => x.default)).word);
       const sel = el('select', { class: 'sl-select', id: 'sl-lifetime', 'data-live-lifetime': true },
-        ...LIFETIMES.map((x) => el('option', { value: x.key, selected: !!x.default }, T(x.word))));
+        ...LIFETIMES.map((x) => el('option', { value: x.key, selected: x.key === dflt }, T(x.word))));
       const one = el('input', { type: 'checkbox', id: 'sl-link-onetime' });
+      const sum = el('span', { 'data-live-lifetime-summary': true }, T('window.live.link.options.summary', { lifetime: word(dflt) }));
+      sel.addEventListener('change', () => { sum.textContent = T('window.live.link.options.summary', { lifetime: word(sel.value) }); });
       kids.push(el('p', { class: 'sl-hint' }, T('window.live.link.pitch')),
-        el('label', { class: 'sl-field', for: 'sl-lifetime' }, el('span', {}, T('window.live.link.lifetime')), sel),
-        el('label', { class: 'sl-check', for: 'sl-link-onetime' }, one, ' ', T('window.live.link.onetime')),
+        el('details', { class: 'sl-options', 'data-live-link-options': true },
+          el('summary', {}, T('window.live.link.options'), ' · ', sum),
+          el('label', { class: 'sl-field', for: 'sl-lifetime' }, el('span', {}, T('window.live.link.lifetime')), sel),
+          el('label', { class: 'sl-check', for: 'sl-link-onetime' }, one, ' ', T('window.live.link.onetime')),
+          el('p', { class: 'sl-hint' }, T('window.live.link.options.hint'))),
         el('div', { class: 'sl-row' }, btn(T('window.live.link.make'), () => makeLink(sel.value, one.checked), '', { disabled: st.linkBusy || st.noNewLink, 'data-live-makelink': true })));
     }
     if (st.linkMsg) kids.push(el('p', { class: 'sl-note is-' + st.linkMsgKind, role: 'status', 'data-live-linkmsg': true }, st.linkMsg));
@@ -834,6 +853,12 @@ export async function startLive({ doc = document, win = window, desk = win.cadcr
       try { a = await host.live.assistant({ person: c, name: (s.client && s.client.name) || '', device: deviceName() }); } catch { a = null; }
       if (!a) continue;
       st.assistants.set(s.id, a);
+      // EG.41: judge each step against the scope the person gave it, and move its cursor to where it worked.
+      guardAssistant(a, c, {
+        getScope: () => st.scopes.get(s.id) || null,
+        onStep: (step, loc) => workingAt(s.id, a, c, step, loc),
+        onRefuse: () => { render(); },
+      });
       // Never reached the session (not even the host's question) in 10 s: give up; it works through this connection.
       win.setTimeout(() => { if (!a.everWelcomed && a.status !== 'waiting' && !a.final) a.leave(); }, 10000);
       a.on('status', ({ status: x, reason }) => {
@@ -853,8 +878,51 @@ export async function startLive({ doc = document, win = window, desk = win.cadcr
       });
     }
   }
+  /** EG.41: the assistant's cursor goes where its step landed, with the tool it is running; 8 s after the last step it rests. */
+  function workingAt(id, a, person, step, loc) {
+    if (a.final) return;
+    const tool = (st.lastTool.get(id) || step.label || '');
+    a.setPresence(presenceFor({ loc, tool, name: (a.o && a.o.name) || '', scope: st.scopes.get(id) || null, keys: person.adapter && person.adapter.presenceKeys }));
+    win.clearTimeout(st.idle.get(id));
+    st.idle.set(id, win.setTimeout(() => { if (!a.final) a.setPresence({ assistant: { n: 1, working: false } }); }, 8000));
+  }
+  /** EG.41: every call an assistant makes while this window is in a session is tagged for the activity log (AC.13). */
+  function tagCall(e) {
+    const id = host.control && host.control.acting;
+    const c = st.client;
+    if (!e || !id || !c || c.final || !st.assistants.has(id)) return;
+    const a = st.assistants.get(id);
+    st.lastTool.set(id, e.tool);
+    tagEntry(e, liveLogFields({ session: c.session || '', as: (a && a.o && a.o.name) || e.client || '', scope: st.scopes.get(id) || null, loc: null, role: a ? 'assistant' : 'via-person' }));
+  }
+  /** What the person is looking at in the app: the adapter's `here()`, else the sheet and box in its own presence. */
+  function hereOf(c) {
+    let h = null;
+    try { h = c.adapter && typeof c.adapter.here === 'function' ? c.adapter.here() : null; } catch { h = null; }
+    if (!h) { const p = c.lastPresence || {}; h = { sheet: typeof p.sp === 'string' ? p.sp : undefined, area: p.box }; }
+    return h;
+  }
+  function giveScope(id, c) {
+    const h = hereOf(c);
+    const sc = makeScope({ sheet: h.sheet, area: h.area });
+    if (!sc) { st.msg = T('window.live.assistant.scope.nohere'); st.msgKind = 'info'; render(); return; }
+    st.scopes.set(id, sc); render();
+  }
+  function sessionOf(cid) { for (const [id, a] of st.assistants) if (a && cid && a.c === cid) return id; return null; }
+  function scopeControls(c, id) {
+    const sc = st.scopes.get(id) || null;
+    if (!scopeable(c.adapter)) return el('p', { class: 'sl-hint', 'data-live-scope-advisory': true }, T('window.live.assistant.scope.advisory'));
+    const d = describeScope(sc);
+    const sheet = d.sheet === undefined || d.sheet === null ? '' : typeof c.adapter.sheetLabel === 'function' ? c.adapter.sheetLabel(d.sheet) : d.sheet;
+    const line = d.kind === 'none' ? T('window.live.assistant.scope.none') : T('window.live.assistant.scope.' + d.kind.replace('+', '-'), { sheet });
+    return el('div', { class: 'sl-row sl-scope', 'data-live-scope': id },
+      el('span', { class: 'sl-muted' }, T('window.live.assistant.scope.title') + ': ' + line),
+      btn(T('window.live.assistant.scope.set'), () => giveScope(id, c), 'sl-btn-line sl-btn-sm', { 'data-live-scope-set': id }),
+      sc ? btn(T('window.live.assistant.scope.clear'), () => { st.scopes.delete(id); render(); }, 'sl-btn-line sl-btn-sm', { 'data-live-scope-clear': id }) : null);
+  }
   /** The assistant disconnected (or its control session ended): its client leaves once its edits are decided. */
   function assistantGone(id) {
+    st.scopes.delete(id); win.clearTimeout(st.idle.get(id)); st.idle.delete(id); st.lastTool.delete(id);
     const a = st.assistants.get(id);
     if (!a || a.final) return;
     a.whenSettled(2000).catch(() => {}).finally(() => { if (!a.final) a.leave(); render(); });
@@ -883,12 +951,19 @@ export async function startLive({ doc = document, win = window, desk = win.cadcr
       el('span', { class: 'sl-avatar sl-avatar-bot', 'aria-hidden': 'true' }, icon('robot')),
       el('span', { class: 'sl-person-name' }, pname === null ? T('window.live.assistant.you') : T('window.live.assistant.via', { name: pname }),
         r.name ? el('span', { class: 'sl-muted' }, ' ' + r.name) : null),
-      el('span', { class: 'sl-muted sl-person-via' }, r.role === 'viewer' ? T('window.live.role.viewer') : can(person)),
+      el('span', { class: 'sl-muted sl-person-via' }, r.role === 'viewer' ? T('window.live.role.viewer') : workingLine(c, r) || can(person)),
       st.mode === 'host' && !(person && person.self)
         ? el('span', { class: 'sl-person-actions' }, btn(T('window.live.people.remove'), async () => {
           if (await confirm(T('window.live.assistant.remove.ask', { name: pname || T('window.live.noname') }), T('window.live.people.remove'))) c.remove(r.c);
         }, 'sl-btn-line sl-btn-sm', { 'data-live-remove': r.c }))
-        : el('span', { class: 'sl-muted sl-person-role' }, T('window.live.role.assistant')));
+        : el('span', { class: 'sl-muted sl-person-role' }, T('window.live.role.assistant')),
+      person && person.self && sessionOf(r.c) ? scopeControls(c, sessionOf(r.c)) : null);
+  }
+  /** EG.41: what the assistant's own client says it is doing (its presence, set by workingAt), for everyone's people list. */
+  function workingLine(c, r) {
+    const p = (r.self ? c.lastPresence : c.presence.get(r.c)) || {};
+    const tool = p.assistant && p.assistant.working ? [p.cmd, p.command].find((x) => typeof x === 'string' && x) : '';
+    return tool ? T('window.live.assistant.working', { tool }) : '';
   }
   function assistantRow(row, a) {
     const can = a.groups.map((g) => T('window.live.assistant.group.' + g)).join(', ');

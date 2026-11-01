@@ -16,7 +16,11 @@ studio/
     route.js            which app opens a file (by type; the PDF question; "always use")
     channel.js          the one message channel between Studio's windows
     window.js           what every app window in Studio carries (the Studio button, the channel)
-    handoff.js          hands a file to an app window without uploading it
+    handoff.js          hands a file to an app window without uploading it (and takes it, for drag between apps)
+    drag.js, window-drag.js  drag between apps (0.8 EG.78): offers, the shelf, window.cadcraftStudio.drag
+    machines.js         send a job to a printer / CNC / laser on the local network (0.8 EG.40; the desktop shell does the request)
+    undo-journal.js     SPIKE (0.8 EG.77): one Undo across windows, not mounted
+    live/               Studio Live in the app window; live/assistant-scope.js = an assistant's sheet, area, cursor and log tags (0.8 EG.41)
     cloud.js            the account card's data and the queue for saves made while offline
     lang/               the hub's words (en, es-MX, id); the product name lives only here
   pack/                 the suite packer
@@ -28,6 +32,7 @@ studio/
     INSTALL.md          the browser edition's install guide (shipped in the folder)
   test/
     test-hub.mjs        the DOM-free modules and the language file, no browser     node test/test-hub.mjs
+    test-drag.mjs, test-machines.mjs, test-assistant-scope.mjs, test-undo-journal.mjs, test-live.mjs   the 0.8 round-2 modules, no browser
     browser.mjs         the packed suite in Chromium (Playwright)                   node test/browser.mjs
     desktop.mjs         Studio inside the real desktop shell (WebKitGTK)            dbus-run-session -- xvfb-run -a node test/desktop.mjs
     lib.mjs             what the tests share

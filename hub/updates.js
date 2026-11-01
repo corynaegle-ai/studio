@@ -24,13 +24,29 @@ const EDITION = {
   'msix-store': 'updates.edition.msix-store', deb: 'updates.edition.deb', appimage: 'updates.edition.appimage', dmg: 'updates.edition.dmg',
 };
 const PLATFORM = { windows: 'updates.platform.windows', linux: 'updates.platform.linux', macos: 'updates.platform.macos' };
+/** SU.1061: what this system needs, from `studio/tools/browser-floor.mjs` (the suite's syntax asks for Safari 16.4 = macOS 13.3 /
+ *  WebKitGTK 2.40; Windows: the carried WebView2 runtime's own requirement). Re-measure each release; the build's macOS and
+ *  iOS minimums must agree (desktop-shell build.mjs, tauri.ios.conf.json). */
+const NEEDS = { windows: 'updates.needs.windows', macos: 'updates.needs.macos', linux: 'updates.needs.linux' };
+/** The web engine this window runs on, read from the engine itself: { name, version } or null. */
+export function engineLabel(ua) {
+  const s = String(ua || '');
+  let m = /\bChrome\/(\d+)/.exec(s);
+  if (m) return { name: 'Chromium', version: m[1] };
+  m = /\bVersion\/(\d+(?:\.\d+)?).*Safari\//.exec(s);
+  if (m) return { name: 'Safari WebKit', version: m[1] };
+  m = /\bFirefox\/(\d+)/.exec(s);
+  if (m) return { name: 'Firefox', version: m[1] };
+  m = /AppleWebKit\/([\d.]+)/.exec(s);
+  return m ? { name: 'WebKit', version: m[1] } : null;
+}
 /** Where this copy's updates come from. */
 const FROM = { feed: 'updates.from.site', notify: 'updates.from.notify', store: 'updates.from.store', appinstaller: 'updates.from.appinstaller', sideloaded: 'updates.from.sideloaded' };
 /** The last check's result, as Settings words it. */
 const LAST = { current: 'updates.last.current', available: 'updates.last.available', declined: 'updates.last.declined', download: 'updates.last.download', installing: 'updates.last.installing', installed: 'updates.last.installed' };
 
 export const KEYS = ['updates.none', 'updates.done', 'updates.failed', ...Object.values(OK), ...[...BAD].map((c) => 'updates.err.' + c),
-  ...Object.values(EDITION), ...Object.values(PLATFORM), ...Object.values(FROM), ...Object.values(LAST),
+  ...Object.values(EDITION), ...Object.values(PLATFORM), ...Object.values(NEEDS), ...Object.values(FROM), ...Object.values(LAST),
   'updates.edition.unknown', 'updates.never', 'updates.latest.same', 'updates.latest.unknown', 'updates.install', 'updates.install.download',
   'updates.install.store', 'updates.why.busy', 'updates.why.none', 'updates.auto.windows', 'updates.auto.daily'];
 
@@ -73,6 +89,7 @@ export function updatesView(st) {
     edition: EDITION[st.edition] || 'updates.edition.unknown',
     version: v,
     platform: PLATFORM[st.platform] || null,
+    needs: NEEDS[st.platform] || null,
     from,
     last: last ? { at: last.at, key: lastKey(last.outcome) } : null,
     latest,

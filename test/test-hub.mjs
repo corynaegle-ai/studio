@@ -191,7 +191,7 @@ else {
   const app = fs.readFileSync(path.join(SITE, 'public_html/assets/apps/bimcraft/dev/handoff.js'), 'utf8');
   const v = (s, re) => (s.match(re) || [])[1];
   ok(v(hub, /const DB = '([^']+)'/) === v(app, /const DB = '([^']+)'/) && v(hub, /const STORE = '([^']+)'/) === v(app, /const STORE = '([^']+)'/), 'same database and store as bimcraft/dev/handoff.js');
-  ok(/s\.put\(\{ file, name: file\.name, from: String\(from \|\| ''\), at: Date\.now\(\) \}, id/.test(hub) && /s\.put\(\{ file, name: file\.name, from: String\(from \|\| ''\), at: Date\.now\(\) \}, id\.toLowerCase\(\)\)/.test(app), 'same record {file, name, from, at} under the lower-case id');
+  ok(/s\.put\(\{ file, name: file\.name, from: String\(from \|\| ''\), at: Date\.now\(\) \}, id/.test(hub) && /s\.put\(\{ file, name: file\.name, from: String\(from \|\| ''\), at: Date\.now\(\)(, meta: cleanMeta\(meta\))? \}, id\.toLowerCase\(\)\)/.test(app), 'same record {file, name, from, at} under the lower-case id');
   ok(/MAX_AGE_MS = 10 \* 60 \* 1000/.test(hub) && /MAX_AGE_MS = 10 \* 60 \* 1000/.test(app), 'same expiry (10 minutes)');
 }
 
@@ -271,12 +271,14 @@ section('Language file');
 {
   const en = JSON.parse(fs.readFileSync(path.join(STUDIO, 'hub/lang/en.json'), 'utf8'));
   // window.js (packed into every app page) looks its window.* words up with T().
-  const src = ['hub.js', 'index.html', 'window.js'].map((f) => fs.readFileSync(path.join(STUDIO, 'hub', f), 'utf8')).join('\n');
+  const src = ['hub.js', 'index.html', 'window.js', 'window-drag.js', 'connect-ai.js', 'hosted.js', 'machines-ui.js', 'standards-card.js', 'activity-card.js', 'ask-key-card.js'].map((f) => fs.readFileSync(path.join(STUDIO, 'hub', f), 'utf8')).join('\n');
   // Studio Live's words (hub/live/*.js, window.live.* and live.join.*) are checked by test-live.mjs.
   const liveKey = (k) => k.startsWith('window.live.') || k.startsWith('live.join.');
-  const used = new Set([...src.matchAll(/\b[tT]\('([a-z0-9.]+)'[,)]/g), ...src.matchAll(/\? '([a-z0-9]+\.[a-z0-9.]+)' : '([a-z0-9.]+)'/g), ...src.matchAll(/data-t(?:-title|-label)?="([a-z0-9.]+)"/g)].flatMap((m) => m.slice(1).filter(Boolean)));
+  const used = new Set([...src.matchAll(/\b(?:[tT]|word)\('([a-z0-9.]+)'[,)]/g), ...src.matchAll(/\? '([a-z0-9]+\.[a-z0-9.]+)' : '([a-z0-9.]+)'/g), ...src.matchAll(/data-t(?:-title|-label)?="([a-z0-9.]+)"/g)].flatMap((m) => m.slice(1).filter(Boolean)));
   for (const k of ['open', 'start', 'recent', 'windows', 'live', 'account', 'assistants', 'offline', 'updates']) { used.add(`help.${k}.title`); used.add(`help.${k}.body`); }
   for (const k of U.KEYS) used.add(k);   // updates.js answers with these (the hub words them)
+  for (const k of Object.keys(en)) if (/^(askkey\.provider|activity\.kind|activity\.export)\./.test(k)) used.add(k);   // words built from a name in ask-key-card.js / activity-card.js
+  for (const k of Object.keys(en)) if (/^(hosted\.state|hosted\.level|window\.machines\.device)\./.test(k)) used.add(k);   // words built from a name in hosted.js / machines-ui.js
   for (const k of ['edition.browser', 'edition.desktop', 'noscript', 'studio.short', 'window.hub', 'window.hub.title']) used.add(k);
   const missing = [...used].filter((k) => !liveKey(k) && !(k in en));
   ok(!missing.length, 'every key the hub uses exists' + (missing.length ? ': ' + missing.join(', ') : ''));
@@ -316,6 +318,10 @@ ok(U.updateOutcome(null, new Error('boom')).key === 'updates.failed' && U.update
 section('Settings › Updates (0.7 MSIX + one update endpoint)');
 {
   const base = { available: true, auto: false, autoAllowed: true, source: 'feed', route: null, edition: 'installer', version: '0.7.0', platform: 'windows', busy: false, last: null };
+  // SU.1061: what the computer needs, and the engine the window really runs on (read from the engine, not typed in)
+  ok(U.updatesView(base).needs === 'updates.needs.windows' && U.updatesView({ ...base, platform: 'macos' }).needs === 'updates.needs.macos' && U.updatesView({ ...base, platform: 'linux' }).needs === 'updates.needs.linux', 'each desktop platform says what it needs');
+  ok(JSON.stringify(U.engineLabel('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0')) === '{"name":"Chromium","version":"155"}', 'WebView2 reads as Chromium 155');
+  ok(U.engineLabel('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Safari/605.1.15').version === '16.4' && U.engineLabel('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko)').name === 'WebKit' && U.engineLabel('') === null, 'Safari, bare WebKit and nothing');
   let v = U.updatesView(base);
   ok(v.edition === 'updates.edition.installer' && v.platform === 'updates.platform.windows' && v.from === 'updates.from.site' && v.version === '0.7.0', 'version, edition, platform and the source are shown');
   ok(v.last === null && v.latest === null && !v.check.disabled && v.install === null && v.auto.shown, 'never checked: no latest yet, Check is on, no Install');

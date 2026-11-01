@@ -54,7 +54,6 @@
     <section class="studio-sec" aria-labelledby="studio-apps-h">
       <h2 id="studio-apps-h" class="studio-h" data-t="apps.title"></h2>
       <ul class="studio-tiles" data-tiles></ul>
-      <div data-upcoming></div>
     </section>
     <section class="studio-sec" aria-labelledby="studio-recent-h" data-recent>
       <h2 id="studio-recent-h" class="studio-h" data-t="recent.title"></h2>
@@ -99,6 +98,30 @@
     <section class="studio-card" data-windows hidden aria-labelledby="studio-win-h">
       <h2 id="studio-win-h" class="studio-h" data-t="windows.title"></h2>
       <ul class="studio-wins"></ul>
+    </section>
+    <section class="studio-card" data-askkey hidden aria-labelledby="studio-askkey-h">
+      <h2 id="studio-askkey-h" class="studio-h" data-t="askkey.title"></h2>
+      <div data-askkey-body></div>
+    </section>
+    <section class="studio-card" data-connectai hidden aria-labelledby="studio-connectai-h">
+      <h2 id="studio-connectai-h" class="studio-h" data-t="connectai.title"></h2>
+      <div data-connectai-body></div>
+      <div class="studio-hosted" data-hosted hidden>
+        <h3 class="studio-h studio-h-sm" data-t="hosted.title"></h3>
+        <div data-hosted-body></div>
+      </div>
+    </section>
+    <section class="studio-card" data-activity aria-labelledby="studio-activity-h">
+      <h2 id="studio-activity-h" class="studio-h" data-t="activity.title"></h2>
+      <div data-activity-body></div>
+    </section>
+    <section class="studio-card" data-standards aria-labelledby="studio-standards-h">
+      <h2 id="studio-standards-h" class="studio-h" data-t="standards.title"></h2>
+      <div data-standards-body></div>
+    </section>
+    <section class="studio-card" data-machines hidden aria-labelledby="studio-machines-h">
+      <h2 id="studio-machines-h" class="studio-h" data-t="window.machines.title"></h2>
+      <div data-machines-body></div>
     </section>
     <section class="studio-card" data-assist hidden aria-labelledby="studio-assist-h">
       <h2 id="studio-assist-h" class="studio-h" data-t="assist.title"></h2>
@@ -166,6 +189,12 @@
     <label class="studio-check"><input type="checkbox" data-set-news> <span data-t="settings.news.label"></span></label>
     <p class="studio-hint" data-t="settings.news.hint"></p>
     <button type="button" class="studio-btn studio-btn-line studio-btn-sm" data-news-show data-t="settings.news.show" hidden></button>
+  </fieldset>
+  <fieldset class="studio-fieldset">
+    <legend data-t="settings.live"></legend>
+    <label class="studio-field"><span data-t="settings.live.lifetime"></span>
+      <select class="select-cc studio-select" data-set-link-life></select></label>
+    <p class="studio-hint" data-t="settings.live.hint"></p>
   </fieldset>
   <fieldset class="studio-fieldset">
     <legend data-t="settings.types"></legend>

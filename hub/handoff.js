@@ -42,3 +42,39 @@ export async function putHandoff(id, file, from = 'studio', factory = globalThis
     });
   } finally { db.close(); }
 }
+
+/** Take (read and delete) the record under `id`, or null (none, too old, malformed id). Same format the apps' handoff.js read;
+ *  EG.78 (drag between apps): the window's drag module takes what another app's window put there. */
+export async function takeHandoff(id, factory = globalThis.indexedDB, { waitMs = 0 } = {}) {
+  const key = String(id || '').toLowerCase();
+  if (!ID_RE.test(key)) return null;
+  const until = Date.now() + waitMs;
+  for (;;) {   // the source writes the file while the drag is on: wait a little for it
+    const got = await takeOnce(key, factory);
+    if (got || Date.now() >= until) return got;
+    await new Promise((r) => setTimeout(r, 120));
+  }
+}
+
+async function takeOnce(key, factory) {
+  const db = await openDb(factory);
+  try {
+    return await new Promise((resolve, reject) => {
+      const t = db.transaction(STORE, 'readwrite');
+      const s = t.objectStore(STORE);
+      const r = s.get(key);
+      let rec = null;
+      r.onsuccess = () => { rec = r.result || null; if (rec) s.delete(key); };
+      t.oncomplete = () => resolve(rec && rec.file && Date.now() - rec.at <= MAX_AGE_MS ? { file: rec.file, from: rec.from || '' } : null);
+      t.onerror = t.onabort = () => reject(Object.assign(new Error((t.error && t.error.message) || 'storage failed'), { code: 'storage' }));
+    });
+  } finally { db.close(); }
+}
+
+/** Remove a record nobody took (the drag ended with no drop). */
+export async function dropHandoff(id, factory = globalThis.indexedDB) {
+  const key = String(id || '').toLowerCase();
+  if (!ID_RE.test(key)) return;
+  const db = await openDb(factory);
+  try { await new Promise((resolve) => { const t = db.transaction(STORE, 'readwrite'); t.objectStore(STORE).delete(key); t.oncomplete = t.onerror = t.onabort = () => resolve(); }); } finally { db.close(); }
+}

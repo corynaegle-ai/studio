@@ -13,6 +13,9 @@
  *   --editions   reuse editions packed already: <dir>/<slug>/browser-edition/v<build>/ (default: pack each one now)
  *   --out        where the suite goes (default out/ in this repo): <out>/studio-suite/v<build>/
  *   --zip        also <out>/cadcraft-studio-browser-v<build>.zip (reproducible: sorted, fixed dates) + <out>/SHA256SUMS
+ *   --custom     a custom edition for one organisation (0.8 AL.18, pack/custom.mjs): <config.json> names the organisation, its add-ons, defaults and SSO;
+ *                the suite goes to <out>/studio-suite-custom/<id>/v<build>/ with custom/ (custom.json, boot.js, MANIFEST.json + MANIFEST.sig) and the
+ *                bundling statement + desktop plan beside it. Needs the signing key (CC_HOME/secrets/custom-build-signing.key; --sign-key <file>).
  *   --allow-gate keep an app whose edition fails the license/secrets gate (spikes only; the result must never ship)
  *
  * Layout of <out>/studio-suite/v<build>/ (H.2):
@@ -33,7 +36,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import * as custom from './custom.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const STUDIO = path.dirname(HERE);
@@ -50,6 +54,8 @@ const EDITIONS = opt('--editions', null);
 const OUT = path.resolve(opt('--out', path.join(STUDIO, 'out')));
 const ZIP = flag('--zip');
 const ALLOW_GATE = flag('--allow-gate');
+const CUSTOM = opt('--custom', null);
+const SIGN_KEY = opt('--sign-key', path.join(process.env.CC_HOME || '/var/www/CADCRAFT', 'secrets', 'custom-build-signing.key'));
 if (!/^(dev|\d{1,3}\.\d{1,3}(\.\d{1,3})?)$/.test(BUILD)) die('--build takes dev or x.y');
 
 function die(m) { console.error('suite: ' + m); process.exit(1); }
@@ -72,7 +78,17 @@ const jsonEmbed = (v) => JSON.stringify(v).replace(/</g, '\\u003c').replace(/>/g
 const cat = asWww('php', [path.join(HERE, 'catalog.php')]);
 if (cat.status !== 0) die('catalog.php failed: ' + cat.stderr);
 const CATALOG = JSON.parse(cat.stdout);
-const SLUGS = ONLY ? ONLY.split(',').map((s) => s.trim()).filter(Boolean) : CATALOG.apps.map((a) => a.slug);
+// A custom edition's config is read and checked first: a bad config stops here, before any app is packed.
+let CFG = null, CFG_DIR = null;
+if (CUSTOM) {
+  CFG_DIR = path.dirname(path.resolve(CUSTOM));
+  const units = await import(pathToFileURL(path.join(SITE, 'lib/units/unit-table.js')).href);
+  const chk = custom.checkConfig(JSON.parse(read(path.resolve(CUSTOM))), { slugs: CATALOG.apps.map((a) => a.slug), unitOk: (kind, id) => units.unit(id)?.kind === kind });
+  if (!chk.cfg) die('custom config:\n  ' + chk.errors.join('\n  '));
+  CFG = chk.cfg;
+  if (!fs.existsSync(SIGN_KEY)) die(`no signing key at ${SIGN_KEY}: create it once with  node pack/custom.mjs --create-key  (never inside a repo)`);
+}
+const SLUGS = ONLY ? ONLY.split(',').map((s) => s.trim()).filter(Boolean) : (CFG?.apps || CATALOG.apps.map((a) => a.slug));
 for (const s of SLUGS) if (!CATALOG.apps.some((a) => a.slug === s)) die('unknown app ' + s);
 
 const WORK = path.join(STUDIO, 'work');
@@ -108,7 +124,7 @@ const releaseOf = (slug) => JSON.parse(read(path.join(eds[slug], 'release.json')
 
 // ------------------------------------------------------------------ the suite folder
 
-const DEST = path.join(OUT, 'studio-suite', 'v' + BUILD);
+const DEST = CFG ? path.join(OUT, 'studio-suite-custom', CFG.id, 'v' + BUILD) : path.join(OUT, 'studio-suite', 'v' + BUILD);
 fs.rmSync(DEST, { recursive: true, force: true });
 fs.mkdirSync(DEST, { recursive: true });
 
@@ -152,7 +168,7 @@ for (const f of fs.readdirSync(path.join(STUDIO, 'hub/lang')).filter((f) => /^[a
 for (const [loc, l] of Object.entries(langs)) {
   const f = path.join(PUB, 'assets/lang/catalog', loc + '.json');
   if (!exists(f)) continue;
-  for (const [k, v] of Object.entries(JSON.parse(read(f)))) if (k.startsWith('catalog.')) l.strings[k] = v;
+  for (const [k, v] of Object.entries(JSON.parse(read(f)))) if (k.startsWith('catalog.') && k.split('.')[1] !== 'supercadcraft') l.strings[k] = v;   // never SuperCad Studio's copy: a separate commercial product
 }
 const suiteApps = [];
 const siblingsFor = (slug) => Object.fromEntries(INCLUDED.filter((s) => s !== slug).map((s) => [s, { accepts: manifestOf(s).accepts || [] }]));
@@ -170,6 +186,14 @@ for (const slug of INCLUDED) {
     const from = path.join(ed, r);
     if (isSharable(r) && !conflict.has(r) && !keepLocal(r)) { if (!exists(path.join(DEST, r))) copy(from, path.join(DEST, r)); continue; }
     copy(from, path.join(appDir, r));
+    // shell-mount.js imports skill-packs.js by an absolute path (a page under a prefix cannot reach it): make it relative to the suite's shared copy.
+    if (/shell-mount\.js$/.test(r)) {
+      const dst = path.join(appDir, r), txt = fs.readFileSync(dst, 'utf8');
+      if (txt.includes("import('/assets/js/skill-packs.js')")) {
+        const rel = path.relative(path.dirname(dst), path.join(DEST, 'assets/js/skill-packs.js')).split(path.sep).join('/');
+        fs.writeFileSync(dst, txt.replace("import('/assets/js/skill-packs.js')", `import('${rel}')`));
+      }
+    }
   }
   // The page: rendered again with its siblings (after checking a plain render still equals the edition's own page).
   const plain = path.join(WORK, `sib-${slug}-0.json`), sib = path.join(WORK, `sib-${slug}.json`);
@@ -242,22 +266,37 @@ function suitePage(slug, html, isShared) {
 
 // ------------------------------------------------------------------ the hub
 
-const HUB_FILES = ['hub.js', 'hub.css', 'route.js', 'channel.js', 'handoff.js', 'cloud.js', 'news.js', 'updates.js', 'avatar.js', 'window.js'];
+const HUB_FILES = ['hub.js', 'hub.css', 'route.js', 'channel.js', 'handoff.js', 'cloud.js', 'news.js', 'updates.js', 'avatar.js', 'window.js', 'connect-ai.js', 'drag.js', 'window-drag.js', 'machines.js', 'machines-ui.js', 'hosted.js', 'standards-card.js', 'activity-card.js', 'ask-key-card.js'];
 for (const f of HUB_FILES) copy(path.join(STUDIO, 'hub', f), path.join(DEST, 'hub', f));
 // Studio Live's window and hub modules (0.5 LV.6 / LV.7 / LV.23).
 for (const f of fs.readdirSync(path.join(STUDIO, 'hub/live')).filter((f) => /\.(js|css)$/.test(f))) copy(path.join(STUDIO, 'hub/live', f), path.join(DEST, 'hub/live', f));
 copy(path.join(PUB, 'assets/js/host.js'), path.join(DEST, 'hub/host.js'));
+copy(path.join(PUB, '../tools/mcp/clients.mjs'), path.join(DEST, 'hub/clients.mjs'));
+copy(path.join(PUB, 'assets/js/ai-byok.js'), path.join(DEST, 'hub/byok.mjs'));   // AC.11: the engine's limits and defaults, beside the key card
+copy(path.join(PUB, 'assets/js/ai-activity.js'), path.join(DEST, 'hub/ai-activity.js'));   // AC.13: the one log, beside its card
+copy(path.join(PUB, 'assets/js/ai-standards.js'), path.join(DEST, 'hub/ai-standards.js'));   // AC.14: the one cleaner, beside the card
+copy(path.join(PUB, '../tools/mcp/packs.mjs'), path.join(DEST, 'hub/packs.mjs'));              // skill packs + starters + the firm's standards, mounted on the hub's dispatcher
+// AC.3: the hosted connector's client runs in the hub page: the same file, with its three Node-only lines made browser-safe.
+{
+  let hc = fs.readFileSync(path.join(PUB, '../tools/mcp/hosted-client.mjs'), 'utf8');
+  const swaps = [["import os from 'node:os';", "const os = { homedir: () => '' };"],
+    ["Buffer.from(v, 'utf8').toString('base64')", "btoa(String.fromCharCode(...new TextEncoder().encode(v)))"],
+    ["Buffer.byteLength(JSON.stringify(a))", "new TextEncoder().encode(JSON.stringify(a)).length"]];
+  for (const [a, b] of swaps) { if (!hc.includes(a)) die('hosted-client.mjs changed: ' + a); hc = hc.replace(a, b); }
+  fs.writeFileSync(path.join(DEST, 'hub/hosted-client.mjs'), hc);
+}   // AC.2: the AI-app list Connect your AI uses (one source)
 if (!exists(path.join(DEST, 'assets/js/i18n.js'))) copy(path.join(PUB, 'assets/js/i18n.js'), path.join(DEST, 'assets/js/i18n.js'));
+// The apps' shell-mount.js import this by an absolute path the edition packer does not follow (found 2026-10-28; the web editions have the same gap, listed for shell).
+if (!exists(path.join(DEST, 'assets/js/skill-packs.js'))) copy(path.join(PUB, 'assets/js/skill-packs.js'), path.join(DEST, 'assets/js/skill-packs.js'));
 const icons = (shared.size && [...shared.keys()].map((k) => (k.match(/^assets\/vendor\/bootstrap-icons\/([^/]+)\//) || [])[1]).find(Boolean)) || null;
 if (!icons) die('no Bootstrap Icons in the editions');
-const hubFiles = ['index.html', 'favicon.svg', 'assets/css/tokens.css', 'assets/js/i18n.js', ...HUB_FILES.map((f) => 'hub/' + f), 'hub/host.js',
+const hubFiles = ['index.html', 'favicon.svg', 'assets/css/tokens.css', 'assets/js/i18n.js', ...HUB_FILES.map((f) => 'hub/' + f), 'hub/host.js', 'hub/clients.mjs', 'hub/hosted-client.mjs', 'hub/ai-standards.js', 'hub/ai-activity.js', 'hub/packs.mjs', 'assets/js/skill-packs.js',
   ...fs.readdirSync(path.join(DEST, 'hub/live')).map((f) => 'hub/live/' + f),
   ...walk(path.join(DEST, 'assets/vendor/bootstrap-icons', icons)).filter((r) => /\.(css|woff2?)$/.test(r)).map((r) => `assets/vendor/bootstrap-icons/${icons}/${r}`),
   ...walk(path.join(DEST, 'assets/vendor')).filter((r) => r.startsWith('archivo/') && r.endsWith('.woff2')).map((r) => 'assets/vendor/' + r)];
 const suiteJson = {
   format: 'cadcraft-suite', version: 1, name: hubWords['studio.name'], build: BUILD,
   apps: suiteApps.map(({ libs, local_libs, ...a }) => a),
-  upcoming: CATALOG.upcoming,
   left_out: leftOut,
   langs: Object.entries(langs).map(([code, l]) => ({ code, name: l.name })),
   offline: { key: 'studio/hub', page: './', urls: hubFiles.filter((r) => r !== 'index.html') },
@@ -298,12 +337,55 @@ const release = {
   format: 'cadcraft-suite', version: 1, app: 'studio', name: hubWords['studio.name'], edition: 'browser', release: BUILD,
   packed_at: suiteApps.map((a) => a.packed_at).filter(Boolean).sort().pop() || null, license: 'Apache-2.0',   // the newest edition's: same editions → same zip
   apps: suiteApps.map((a) => ({ slug: a.slug, name: a.name, release: a.release, packed_at: a.packed_at, libs: a.libs, local_libs: a.local_libs })),
+  ...(CFG ? { custom: { id: CFG.id, organisation: CFG.organisation } } : {}),
   left_out: leftOut, shared_libs: sharedLibs, files: files.length, bytes_before_this_file: bytes,
   sizes: { suite: bytes, apps_if_separate: INCLUDED.reduce((n, s) => n + walk(eds[s]).reduce((m, r) => m + fs.statSync(path.join(eds[s], r)).size, 0), 0) },
 };
 fs.writeFileSync(path.join(DEST, 'release.json'), JSON.stringify(release, null, 2) + '\n');
 console.log(`== suite: ${path.relative(STUDIO, DEST)} — ${INCLUDED.length} apps, ${files.length + 1} files, ${(bytes / 1048576).toFixed(1)} MB ` +
   `(the editions separately: ${(release.sizes.apps_if_separate / 1048576).toFixed(1)} MB)` + (leftOut.length ? `; left out: ${leftOut.map((l) => l.slug).join(', ')}` : ''));
+
+// ------------------------------------------------------------------ the custom edition (0.8 AL.18): the organisation's add-ons, defaults, label, signature
+
+let CUSTOM_STATEMENT = null;
+if (CFG) {
+  const ids = path.join(WORK, `custom-addons-${CFG.id}.json`);
+  fs.writeFileSync(ids, JSON.stringify({ seats: CFG.seats, addons: CFG.addons }));
+  try { fs.chownSync(ids, 33, 33); } catch { /* not root */ }
+  const ca = asWww('php', [path.join(HERE, 'custom-addons.php'), ids]);
+  if (ca.status !== 0) die('custom-addons.php failed: ' + (ca.stderr || ca.stdout));
+  const got = JSON.parse(ca.stdout);
+  if (got.refused.length) die('add-ons that cannot go in this build:\n  ' + got.refused.map((r) => `${r.id}: ${r.why}`).join('\n  '));
+  const firstParty = {};
+  for (const slug of INCLUDED) {
+    const idx = path.join(DEST, 'apps', slug, 'assets/apps', slug, BUILD, 'addons/index.json');
+    firstParty[slug] = new Set(exists(idx) ? JSON.parse(read(idx)).addons : []);
+  }
+  const outside = got.items.filter((i) => !i.first_party);
+  for (const i of got.items.filter((x) => x.first_party)) {
+    if (!INCLUDED.some((s) => firstParty[s].has(i.id))) die(`add-on ${i.id} is first-party but is not bundled in any app of this ${BUILD} build`);
+  }
+  const logoName = CFG.branding.logo;
+  let logoBytes = null;
+  if (logoName) {
+    logoBytes = fs.readFileSync(path.join(CFG_DIR, logoName));
+    const why = custom.checkLogo(logoBytes, logoName);
+    if (why) die(`branding.logo ${logoName}: ${why}`);
+  }
+  const plan = { apps: INCLUDED, build: BUILD, firstParty, logoBytes, logoName,
+    addonsPlan: outside.map((i) => ({ id: i.id, version: i.version, first_party: false, apps: i.apps, files: Object.fromEntries(Object.entries(i.files).map(([k, v]) => [k, Buffer.from(v, 'base64')])) })) };
+  const data = custom.applyCustom(DEST, CFG, plan);
+  CUSTOM_STATEMENT = {
+    format: 'cadcraft-custom-statement', id: CFG.id, organisation: CFG.organisation, build: BUILD, seats: CFG.seats,
+    note: 'For the owner. Bundled outside items are paid by the organisation per seat (spec § 11.4, § 12.2); nothing is charged by the packer.',
+    outside_items: outside.map((i) => ({ id: i.id, version: i.version, maker: i.maker, paid: i.paid, price: i.price_label, package_sha256: i.sha256 })),
+    first_party_items: got.items.filter((x) => x.first_party).map((x) => x.id),
+    // owner decision 2026-10-30: setup fee + yearly rebuild fee, amounts from the site's settings (null = the owner has not priced it yet)
+    fees: got.fees || { setup_cents: null, rebuild_yearly_cents: null, currency: 'USD' },
+    updates: CFG.updates,
+  };
+  console.log(`== custom: ${data.line}: ${data.addons.length} add-on(s) bundled, defaults ${JSON.stringify(data.defaults.space)}${data.sso ? ', SSO link for team ' + data.sso.team : ''}`);
+}
 
 // ------------------------------------------------------------------ checks: every local URL resolves; the gate
 
@@ -324,6 +406,16 @@ for (const page of ['index.html', ...INCLUDED.map((s) => `apps/${s}/index.html`)
 }
 for (const a of suiteApps) for (const u of a.offline) if (!exists(path.join(DEST, u))) problems.push(`offline list of ${a.slug}: ${u} missing`);
 if (problems.length) die('broken suite:\n  ' + problems.slice(0, 20).join('\n  '));
+if (CFG) {   // last change to the folder: sign it (everything after this only reads)
+  const kid = custom.signTree(DEST, CFG.id, BUILD, fs.readFileSync(SIGN_KEY));
+  const v = custom.verifyTree(DEST, fs.readFileSync(path.join(HERE, 'custom-build-signing.pub')));
+  if (!v.ok) die(`the signature does not verify against pack/custom-build-signing.pub (key ${kid}): ${v.problems[0]}. The public file must be the half of ${SIGN_KEY}.`);
+  CUSTOM_STATEMENT.signing_key_id = kid;
+  const side = path.join(OUT, 'studio-suite-custom', CFG.id);
+  fs.writeFileSync(path.join(side, `v${BUILD}-statement.json`), JSON.stringify(CUSTOM_STATEMENT, null, 2) + '\n');
+  fs.writeFileSync(path.join(side, `v${BUILD}-desktop-plan.md`), custom.desktopPlan(CFG, BUILD));
+  console.log(`== signed: key ${kid}; statement and desktop plan beside the folder`);
+}
 const gate = spawnSync('node', [path.join(SITE, 'bin/test-licenses.mjs'), '--tree', DEST], { encoding: 'utf8' });
 if (gate.status !== 0 && !ALLOW_GATE) die('license/secrets gate failed:\n' + (gate.stdout + gate.stderr).trim().split('\n').slice(-15).join('\n'));
 console.log('== gate: ' + (gate.status === 0 ? 'clean' : 'FAILED (allowed by --allow-gate: never ship this)'));
@@ -332,8 +424,8 @@ console.log('== gate: ' + (gate.status === 0 ? 'clean' : 'FAILED (allowed by --a
 
 if (ZIP) {
   // A reproducible zip (one top folder, sorted, the pack date on every entry), written here: no zip tool needed.
-  const top = `cadcraft-studio-v${BUILD}`;
-  const zipFile = path.join(OUT, `cadcraft-studio-browser-v${BUILD}.zip`);
+  const top = CFG ? `cadcraft-studio-${CFG.id}-v${BUILD}` : `cadcraft-studio-v${BUILD}`;
+  const zipFile = path.join(OUT, CFG ? `cadcraft-studio-${CFG.id}-browser-v${BUILD}.zip` : `cadcraft-studio-browser-v${BUILD}.zip`);
   const when = new Date((release.packed_at || '2026-01-01').slice(0, 10) + 'T00:00:00Z');
   const dosTime = 0;
   const dosDate = (((when.getUTCFullYear() - 1980) << 9) | ((when.getUTCMonth() + 1) << 5) | when.getUTCDate()) & 0xffff;

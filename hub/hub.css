@@ -97,15 +97,6 @@ body.studio {
 .studio-tile-foot { display: flex; align-items: center; gap: 0.75rem; }
 .studio-tile-count { font-size: var(--fs-sm); color: var(--ink-2); }
 .studio-swatch { display: inline-block; width: 0.75rem; height: 0.75rem; background: var(--layer); border-radius: 1px; flex: none; }
-.studio-upcoming {
-  margin-top: 1rem; padding: 0.9rem 1rem;
-  border: var(--pen-1) dashed var(--line); border-radius: var(--radius);
-  color: var(--ink-2); opacity: 0.75;
-}
-.studio-upcoming h3 { margin: 0; font-size: var(--fs-md); }
-.studio-upcoming p { margin: 0.2rem 0; font-size: var(--fs-sm); }
-.studio-upcoming-role { font-weight: 600; }
-.studio-upcoming-tag { font-size: var(--fs-sm); border: var(--pen-1) solid var(--line); border-radius: var(--radius); padding: 0 0.4rem; }
 
 /* Recent files and cloud drawings */
 .studio-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.75rem; }

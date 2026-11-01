@@ -47,6 +47,9 @@
 
 .sl-field { display: grid; gap: .2rem; margin: .5rem 0; }
 .sl-check { display: flex; align-items: center; gap: .35rem; margin: .4rem 0 0; }
+.sl-options { margin: .5rem 0; }
+.sl-options > summary { cursor: pointer; }
+.sl-options[open] > summary { margin-bottom: .4rem; }
 .sl-input, .sl-select {
   width: 100%; padding: .3rem .45rem; font: inherit; color: var(--ink); background: var(--sheet);
   border: var(--pen-1) solid var(--line); border-radius: var(--radius);

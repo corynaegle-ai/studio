@@ -3,7 +3,7 @@
  * hub.js — CadCraft Studio's home screen (docs/0.4-PART2.md track H; working name "Studio", decision 13: the name lives in
  * the language file's `studio.name` and `studio.short`, nowhere else). Plain JS, no build step.
  *
- * What it shows: the eight apps as tiles (layer colours, version, Open), SuperCadCraft grayed out, recent files from
+ * What it shows: the eight apps as tiles (layer colours, version, Open), recent files from
  * every app (H.4) and — signed in on the desktop — cloud drawings beside them (C.7), "Open a file…" + a drop zone that
  * route each file to the right app (H.5), the open windows (H.3), the account card (C.7) with the save queue (C.8),
  * what's new and updates (H.7), settings (theme, language, "always use") and help.
@@ -23,9 +23,20 @@ import { putHandoff, newHandoffId } from './handoff.js';
 import { cloudClient, cardModel, SyncQueue, SIGN_IN_AGAIN, CloudError } from './cloud.js';
 import { createHost, recentStore, createControlRelay } from './host.js';
 import { wireJoin } from './live/hub-join.js';
+import { LIFETIMES, LINK_LIFETIME_KEY, linkLifetime, setLinkLifetime } from './live/view.js';
 import { newsFeed, newsDismissal, newer } from './news.js';
-import { updateOutcome, updatesView } from './updates.js';
+import { engineLabel, updateOutcome, updatesView } from './updates.js';
 import { avatarStore } from './avatar.js';
+import { mountConnectAi } from './connect-ai.js';
+import { mountHosted } from './hosted.js';
+import { machinesSettings } from './machines-ui.js';
+import { mountStandards, standardsStore } from './standards-card.js';
+import { mountAskKey, serveAsk } from './ask-key-card.js';   // AC.11: your own model
+import { standardsText } from './ai-standards.js';
+import { mountPacks } from './packs.mjs';
+import { createActivityLog } from './ai-activity.js';
+import { mountActivity } from './activity-card.js';
+import { PACKS } from '../assets/js/skill-packs.js';
 
 const doc = document;
 const suite = JSON.parse(doc.getElementById('studio-suite').textContent);
@@ -281,9 +292,6 @@ function renderTiles() {
       el('button', { type: 'button', class: 'studio-btn studio-btn-plot', 'data-open-app': a.slug, onclick: () => openApp(a.slug) }, t('tile.open'), el('span', { class: 'visually-hidden' }, ' ' + a.name)),
       el('span', { class: 'studio-tile-count', 'data-tile-count': a.slug, hidden: true }))),
   ));
-  const up = $('[data-upcoming]');
-  up.replaceChildren(...(suite.upcoming || []).map((u) => el('div', { class: 'studio-upcoming', 'aria-disabled': 'true' },
-    el('h3', {}, u.name), el('p', { class: 'studio-upcoming-role' }, t('upcoming.role')), el('p', {}, word(u.slug, 'short', u.short)), el('span', { class: 'studio-upcoming-tag' }, t('upcoming.tag')))));
 }
 
 function renderWindows() {
@@ -340,14 +348,18 @@ async function focusWindow(w) {
 /** The shell runs the server (127.0.0.1, token, AGENTS-SPEC §6.2); the hub relays each message to the app windows
  *  (host.js createControlRelay) and keeps the server on only while a window takes assistants. Desktop only. */
 let relay = null;
+const standardsKept = standardsStore();
 const assistSessions = new Set();     // sessions the relay has seen this run (for "Disconnect all")
 let assistShow = false;
 let assistQueue = Promise.resolve();
+const activityLog = createActivityLog();   // AC.13: one list for every window
 const GROUP_WORD = { read: () => t('assist.group.read'), edit: () => t('assist.group.edit'), save: () => t('assist.group.save'), export: () => t('assist.group.export') };
 
 function wireAssistants() {
   if (!desk || !desk.control || typeof desk.control.onRequest !== 'function') return;
-  relay = createControlRelay({ channel, onDisconnect: (sid) => { assistSessions.delete(sid); desk.control.dropSession(sid).catch(() => {}); } });
+  relay = createControlRelay({ channel, activityLog, onDisconnect: (sid) => { assistSessions.delete(sid); desk.control.dropSession(sid).catch(() => {}); },
+    // skill packs, prompt starters and the firm's standards (AC.14): read from the kept file on every call, so an edit applies at once
+    mount: (d, o) => mountPacks(d, { packs: PACKS, enabled: o.enabled, standards: { get: () => standardsKept.get(), text: standardsText } }) });
   desk.control.onRequest((message, session, reply) => {
     if (session && session.id) assistSessions.add(session.id);
     relay.handle(message, session || {}).then(reply, () => reply(message && message.id !== undefined
@@ -865,10 +877,14 @@ async function renderUpdatesSettings() {
   const v = updatesView(st);
   if (!v) { box.replaceChildren(el('p', { class: 'studio-hint' }, t(desk ? 'updates.none' : 'updates.browser'))); return; }
   const row = (label, ...val) => [el('dt', {}, label), el('dd', {}, ...val)];
+  const engine = engineLabel(typeof navigator !== 'undefined' ? navigator.userAgent : '');
   const when = (ms) => el('time', { datetime: new Date(ms).toISOString(), title: new Date(ms).toLocaleString(locale()) }, new Date(ms).toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' }));
   const facts = el('dl', { class: 'studio-facts' },
     row(t('settings.updates.current'), el('strong', {}, v.version), ' · ', t(v.edition), v.platform ? ' · ' + t(v.platform) : ''),
     v.from ? row(t('settings.updates.from'), t(v.from)) : null,
+    v.needs ? row(t('settings.updates.needs'), t(v.needs)) : null,
+    engine ? row(t('settings.updates.engine'), engine.name + ' ' + engine.version) : null,
+    row(t('settings.updates.about'), t('settings.updates.about.text')),
     row(t('settings.updates.last'), v.last ? [when(v.last.at), ' · ', t(v.last.key)] : t('updates.never')),
     row(t('settings.updates.latest'), !v.latest ? t('updates.latest.unknown')
       : v.latest.same ? [el('strong', {}, t('updates.latest.same')), ' ', t('settings.updates.same.detail', { v: v.latest.version }), ...(v.last ? [' · ', when(v.last.at)] : [])]
@@ -973,6 +989,7 @@ function wireSettings() {
   news.checked = newsOn();
   news.addEventListener('change', () => { ls.set(LS.news, news.checked ? null : '0'); if (!news.checked) feed.forget(); renderSiteNews({ force: news.checked }); });
   dlg.querySelector('[data-set-forget]').addEventListener('click', () => { ls.set(LS.always, null); renderSettingsTypes(); say(t('settings.types.forgot')); });
+  wireLinkLifetime(dlg);
   wireInputFamily(dlg);
   wireLayoutReset(dlg);
   wireUiSize(dlg);
@@ -982,6 +999,17 @@ function wireSettings() {
   doc.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === ',') { e.preventDefault(); dlg.open ? dlg.close() : dlg.showModal(); } });
   // Another window changed the theme (the apps share cc-space on this origin).
   window.addEventListener('storage', (e) => { if (e.key === 'cc-space') { const v = e.newValue || 'system'; doc.documentElement.setAttribute('data-space', v === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'model' : 'paper') : v); } });
+}
+
+// How long a new invite link works (DEC-7, owner 2026-10-25: a default here, changed per link in the app's Link options;
+// default 1 hour). localStorage LINK_LIFETIME_KEY, read by every app window on this origin (live/view.js).
+function wireLinkLifetime(dlg) {
+  const sel = dlg.querySelector('[data-set-link-life]');
+  if (!sel) return;
+  const fill = () => sel.replaceChildren(...LIFETIMES.map((x) => el('option', { value: x.key, selected: x.key === linkLifetime(localStorage) }, t(x.word))));
+  fill();
+  sel.addEventListener('change', () => { setLinkLifetime(localStorage, sel.value); say(t('settings.live.saved')); });
+  window.addEventListener('storage', (e) => { if (e.key === LINK_LIFETIME_KEY) fill(); });
 }
 
 // Menus, keys and mouse in every app (0.5 IP.4; the apps' side is the shell's assets/js/app-input.js): one style family for
@@ -1088,6 +1116,16 @@ wireSettings();
 wireHelp();
 wireOffline();
 wireAssistants();
+{ const ac = mountActivity({ box: $('[data-activity]'), log: activityLog, t, el }); ac.render(); }   // AC.13: what the assistants did
+if (desk && desk.ask) { const box = $('[data-askkey]'); box.hidden = false; mountAskKey({ box: $('[data-askkey-body]'), desk, t, el, say }).render(); serveAsk({ channel, desk }); }   // AC.11: the key in the credential store, the Ask box on it
+{ const sc = mountStandards({ box: $('[data-standards]'), t, el, say }); sc.render(); }   // AC.14: the firm's house rules, for every AI
+if (desk && desk.connect) { const ca = mountConnectAi({ box: $('[data-connectai]'), desk, relay, t, el, say }); ca.render(); channel.on('control.status', () => setTimeout(ca.render, 0));
+  // AC.3: the hosted connector, through the shell's proxy (the device token never reaches this page)
+  const hbox = $('[data-hosted]');
+  if (desk.cloud && hbox) { hbox.hidden = false; const hc = mountHosted({ box: hbox, desk, relay, t, el, say }); hc.render(); }
+}
+// EG.40: machines (printers, CNC, laser) on the local network — settings; the apps' "Send to a machine…" is window.cadcraftStudio.machines.send
+if (desk && desk.machines && $('[data-machines]')) { $('[data-machines]').hidden = false; $('[data-machines-body]').replaceChildren(machinesSettings({ doc, T: (k) => t(k), desk, canSetKey: true, say })); }
 doc.querySelectorAll('[data-open-file]').forEach((b) => b.addEventListener('click', () => pickAndOpen()));
 $('[data-drop]').addEventListener('click', (e) => { if (!e.target.closest('button')) pickAndOpen(); });
 doc.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); pickAndOpen(); } });
