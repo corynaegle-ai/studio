@@ -202,6 +202,7 @@
   "settings.theme.system": "Match my system",
   "settings.theme.hint": "Every app in Studio follows this.",
   "settings.lang": "Language",
+  "settings.lang.auto": "Automatic (your browser's language)",
   "settings.lang.hint": "More languages are coming.",
   "settings.types": "Opening files",
   "settings.types.when": "When you open a {ext} file",

@@ -51,12 +51,29 @@ const ls = {
   set(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* private mode */ } },
 };
 
-// A language other than the page's, chosen in Settings and packed in #studio-langs.
+// A language other than the page's, chosen in Settings (or Automatic: the browser's languages) and packed in #studio-langs.
+// The choice is also written as the cc_lang cookie, the one the apps read (assets/js/app-lang-boot.js), same format as i18n.js setLocale.
+const matchLang = (want, have) => {
+  const norm = (x) => String(x || '').trim().replace('_', '-').split('-').map((p, i) => (i === 0 ? p.toLowerCase() : p.length === 2 ? p.toUpperCase() : p.length === 4 ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p)).join('-');
+  const w = norm(want), base = w.split('-')[0];
+  if (!/^[a-z]{2,3}(-|$)/.test(w)) return null;
+  return have.find((h) => h === w) || have.find((h) => h === base) || have.find((h) => h.split('-')[0] === base) || null;
+};
+const chosenLang = () => ls.get(LS.lang) || '';
+const setLangChoice = (v) => {
+  ls.set(LS.lang, v || null);
+  try { doc.cookie = 'cc_lang=' + (v ? encodeURIComponent(v) : '') + '; path=/; SameSite=Lax; max-age=' + (v ? 31536000 : 0); } catch { /* no cookies */ }
+};
 (() => {
-  const want = ls.get(LS.lang);
-  if (!want || want === locale()) return;
   try {
     const all = JSON.parse(doc.getElementById('studio-langs')?.textContent || '{}');
+    const have = Object.keys(all);
+    let want = chosenLang();
+    if (!want) {
+      const nav = (typeof navigator !== 'undefined' && (navigator.languages?.length ? navigator.languages : [navigator.language])) || [];
+      for (const n of nav) { const m = matchLang(n, have); if (m) { want = m; break; } }
+    } else want = matchLang(want, have) || '';
+    if (!want || want === locale()) return;
     if (all[want]) { init({ locale: want, chain: [want, 'en'], strings: { ...(all.en || {}), ...all[want] } }); doc.documentElement.lang = want; }
   } catch { /* keep the page's */ }
 })();
@@ -981,9 +998,11 @@ function wireSettings() {
   dlg.querySelectorAll('input[name="space"]').forEach((r) => { r.checked = r.value === cur; r.addEventListener('change', () => setSpace(r.value)); });
   const lang = dlg.querySelector('[data-set-lang]');
   const langs = suite.langs || [{ code: 'en', name: 'English' }];
-  lang.replaceChildren(...langs.map((l) => el('option', { value: l.code, selected: l.code === locale() }, l.name)));
+  const pick = chosenLang();
+  lang.replaceChildren(el('option', { value: '', selected: !pick }, t('settings.lang.auto')),
+    ...langs.map((l) => el('option', { value: l.code, selected: l.code === pick }, l.name)));
   lang.disabled = langs.length < 2;
-  lang.addEventListener('change', () => { ls.set(LS.lang, lang.value); location.reload(); });
+  lang.addEventListener('change', () => { setLangChoice(lang.value); location.reload(); });
   renderSettingsTypes();
   const news = dlg.querySelector('[data-set-news]');
   news.checked = newsOn();

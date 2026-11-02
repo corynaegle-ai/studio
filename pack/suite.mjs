@@ -131,7 +131,7 @@ fs.mkdirSync(DEST, { recursive: true });
 // Shared shell + libraries: a path is shared when every edition that has it has the same bytes.
 const shared = new Map();       // rel path (assets/css/x, assets/js/x, assets/vendor/lib/ver/...) → sha
 const conflict = new Set();
-const isSharable = (r) => /^assets\/(css|js)\/[^/]+$/.test(r) || /^assets\/js\/compute\/[^/]+$/.test(r) || /^assets\/vendor\/[a-z0-9._-]+\/[^/]+\//.test(r) || /^favicon[^/]*$/.test(r);
+const isSharable = (r) => /^assets\/(css|js)\/[^/]+$/.test(r) || /^assets\/js\/compute\/[^/]+$/.test(r) || /^assets\/vendor\/[a-z0-9._-]+\/[^/]+\//.test(r) || /^assets\/lang\/shell\/[^/]+\.json$/.test(r) || /^favicon[^/]*$/.test(r);
 for (const slug of INCLUDED) {
   for (const r of walk(eds[slug])) {
     if (!isSharable(r)) continue;
