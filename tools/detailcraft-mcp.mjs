@@ -37,8 +37,19 @@ async function restart() {
   if (!appPath) throw new Error('Set CADCRAFT_STUDIO_APP to the signed development app.');
   const candidate = await realpath(appPath);
   await run('/usr/bin/codesign',['--verify','--deep','--strict',candidate]);
-  const windows = (await callLocal('studio_windows_list')).windows;
-  if (!windows?.length || windows.some(w=>w.app!=='detailcraft' || !w.assistants || !w.allowed?.includes('read'))) throw new Error('Restart requires only readable SteleFab windows.');
+  const label = w => w.studioLabel || w.window;
+  const readWindows = async () => {
+    const windows = (await callLocal('studio_windows_list')).windows;
+    if (!Array.isArray(windows) || !windows.length || windows.some(w=>w.app!=='detailcraft' || !w.assistants || !w.allowed?.includes('read') || typeof label(w)!=='string' || !label(w)) || new Set(windows.map(label)).size!==windows.length) throw new Error('Restart requires only uniquely identified readable SteleFab windows.');
+    return windows;
+  };
+  const windows = await readWindows();
+  const inventory = JSON.stringify(windows.map(label).sort());
+  const unchangedWindows = async () => {
+    const current = await readWindows();
+    if (JSON.stringify(current.map(label).sort())!==inventory) throw new Error('Open windows changed before restart; retry after saving all models.');
+    return current;
+  };
   for (const w of windows) {
     // Document aliases can change or collide; the native label identifies this window.
     const info=await callLocal('detail_app_info',{window:w.studioLabel || w.window});
@@ -50,7 +61,9 @@ async function restart() {
   const identity=(await run('/usr/libexec/PlistBuddy',['-c','Print :CFBundleIdentifier',bundle+'/Contents/Info.plist'])).stdout.trim();
   if(identity!=='com.getcadcraft.studio') throw new Error('Unexpected Studio application identity.');
   // No model operation is replayed. A fresh connection is established only after the old process exits.
-  for (const w of windows) {const i=await callLocal('detail_app_info',{window:w.studioLabel || w.window});if(i.unsaved || i.busy)throw new Error('Model changed before restart.');}
+  for (const w of await unchangedWindows()) {const i=await callLocal('detail_app_info',{window:label(w)});if(i.unsaved || i.busy)throw new Error('Model changed before restart.');}
+  // Also catch a window opened or made unreadable during the second document checks.
+  await unchangedWindows();
   process.kill(Number(pid),'SIGTERM');
   const deadline=Date.now()+7000;
   for (;;) {
