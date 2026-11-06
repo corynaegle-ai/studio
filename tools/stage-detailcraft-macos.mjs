@@ -1,0 +1,72 @@
+import { nativeFocusOverlay } from './native-window-focus-overlay.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+const args=process.argv.slice(2);const opt=(k,d)=>args.includes(k)?args[args.indexOf(k)+1]:d;
+if(!args.includes('--edition')||!args.includes('--out'))throw Error('Usage: node stage-detailcraft-macos.mjs --edition <packed edition directory> --out <new .app path> [--baseline <original .app>] [--executable <newly built Studio executable>]');
+const baseline=path.resolve(opt('--baseline','cadcraft-desktop-shell/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/CadCraft Studio.app'));
+const edition=path.resolve(opt('--edition','work/runtime-integration/candidate-2/edition/detailcraft-browser-edition-vdev'));
+const out=path.resolve(opt('--out','work/runtime-integration/SteleFab.app'));
+const displayName=opt('--display-name','SteleFab');
+if(!/^[A-Za-z][A-Za-z0-9 -]{0,60}$/.test(displayName))throw Error('Invalid display name');
+const icon=path.resolve(opt('--icon','cadcraft-desktop-shell/assets/stelefab/icons/icon.icns'));
+if(!fs.statSync(icon).isFile())throw Error('Missing branded ICNS');
+if(fs.existsSync(out))throw Error('Refusing to overwrite bundle; choose fresh --out: '+out);
+const sha=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+const plistRead=(bundle,key)=>{const r=spawnSync('/usr/libexec/PlistBuddy',['-c','Print :'+key,path.join(bundle,'Contents/Info.plist')],{encoding:'utf8'});if(r.status)throw Error(r.stderr);return r.stdout.trim();};
+const baselineBinaryName=plistRead(baseline,'CFBundleExecutable');
+const baselineExecutable=path.join(baseline,'Contents/MacOS',baselineBinaryName);
+const baselineIdentifier=plistRead(baseline,'CFBundleIdentifier');
+const baselineIndex=path.join(baseline,'Contents/Resources/app/apps/detailcraft/index.html');
+const replacementExecutable=args.includes('--executable')?path.resolve(opt('--executable')):null;
+if(displayName==='SteleFab'&&!replacementExecutable)throw Error('SteleFab requires a freshly branded native executable for its native menu/default icon');
+if(replacementExecutable&&!fs.statSync(replacementExecutable).isFile())throw Error('Replacement executable must be a file');
+const before={executable:sha(baselineExecutable),detailcraftIndex:sha(baselineIndex)};
+fs.cpSync(baseline,out,{recursive:true});
+const nativeTarget=path.join(out,'Contents/MacOS',displayName);
+fs.copyFileSync(replacementExecutable||baselineExecutable,nativeTarget);fs.chmodSync(nativeTarget,0o755);
+if(baselineBinaryName!==displayName)fs.rmSync(path.join(out,'Contents/MacOS',baselineBinaryName));
+const resources=path.join(out,'Contents/Resources');const root=path.join(resources,'app');const dest=path.join(root,'apps/detailcraft');
+const oldHtml=fs.readFileSync(path.join(dest,'index.html'),'utf8');
+const bridgeWords=oldHtml.match(/<script type="application\/json" id="studio-window-lang">[\s\S]*?<\/script>/)?.[0];
+if(!bridgeWords)throw Error('Baseline Studio bridge language payload not found');
+fs.rmSync(dest,{recursive:true});fs.cpSync(edition,dest,{recursive:true});
+let html=fs.readFileSync(path.join(dest,'index.html'),'utf8');
+const jsonEmbed=o=>JSON.stringify(o).replace(/</g,'\\u003c');
+html=html.replace(/(<script type="application\/json" id="cc-edition">)([\s\S]*?)(<\/script>)/,(_,a,j,b)=>{const d=JSON.parse(j);d.handoff=true;d.suite='studio';return a+jsonEmbed(d)+b;});
+html=html.replace(/(<script type="application\/json" id="cc-offline">)([\s\S]*?)(<\/script>)/,(_,a,j,b)=>{const d=JSON.parse(j);d.urls=[...new Set((d.urls||[]).map(u=>'apps/detailcraft/'+String(u).replace(/^\.\//,'')))];d.page='apps/detailcraft/';d.sw='../../sw.js';d.scope='../../';d.key='studio/detailcraft';return a+jsonEmbed(d)+b;});
+const apps=JSON.parse(fs.readFileSync(path.join(root,'release.json'),'utf8')).apps.map(a=>a.slug);
+html=html.replace(/(data-[a-z0-9-]+-url)="\/([a-z0-9-]+)"/g,(all,a,s)=>apps.includes(s)?`${a}="../${s}/index.html"`:all);
+html=html.replace('</head>',bridgeWords+'\n<script type="module" src="../../hub/window.js"></script>\n</head>');
+fs.writeFileSync(path.join(dest,'index.html'),html);
+const shellPath=path.join(resources,'shell.json');const shell=JSON.parse(fs.readFileSync(shellPath,'utf8'));shell.name=displayName;fs.writeFileSync(shellPath,JSON.stringify(shell,null,2)+'\n');
+const plistSet=(key,value)=>{const p=path.join(out,'Contents/Info.plist');let r=spawnSync('/usr/libexec/PlistBuddy',['-c',`Set :${key} ${value}`,p],{encoding:'utf8'});if(r.status)r=spawnSync('/usr/libexec/PlistBuddy',['-c',`Add :${key} string ${value}`,p],{encoding:'utf8'});if(r.status)throw Error(r.stderr);};
+for(const key of ['CFBundleDisplayName','CFBundleName','CFBundleExecutable'])plistSet(key,displayName);
+const iconFile=displayName+'.icns';fs.copyFileSync(icon,path.join(resources,iconFile));plistSet('CFBundleIconFile',iconFile);
+if(plistRead(out,'CFBundleIdentifier')!==baselineIdentifier)throw Error('Bundle identity changed');
+// Maintain native-focus relay code without replacing a different shared-shell version.
+// Legacy editions lacking the extension keep their original hub/launch behavior.
+const appVersions=path.join(edition,'assets/apps/detailcraft');
+const hostSources=fs.existsSync(appVersions)?fs.readdirSync(appVersions).map(v=>path.join(appVersions,v,'host.js')).filter(p=>fs.existsSync(p)):[];
+if(hostSources.length>1)throw Error('Ambiguous packed host source for native-focus overlay');
+let nativeWindowFocus={available:false,reason:'Legacy edition has no maintained native-focus extension'};
+if(hostSources.length===1&&fs.readFileSync(hostSources[0],'utf8').includes('// BEGIN maintained-native-window-focus')){
+ const hubSource=path.resolve(opt('--hub-source','cadcraft-studio/hub/hub.js')),hostTarget=path.join(root,'hub/host.js'),hubTarget=path.join(root,'hub/hub.js');
+ const overlay=nativeFocusOverlay({host:fs.readFileSync(hostTarget,'utf8'),hub:fs.readFileSync(hubTarget,'utf8'),sourceHost:fs.readFileSync(hostSources[0],'utf8'),sourceHub:fs.readFileSync(hubSource,'utf8')});
+ fs.writeFileSync(hostTarget,overlay.host);fs.writeFileSync(hubTarget,overlay.hub);
+ nativeWindowFocus={available:true,sourceHost:hostSources[0],sourceHub:hubSource,...overlay.provenance};
+}
+// Only presentation words in preserved suite shell assets; compatible lowercase identifiers stay intact.
+const rebrand=(file)=>{let t=fs.readFileSync(file,'utf8');let next=t.replaceAll('DetailCraft',displayName).replaceAll('CadCraft Studio',displayName);if(next!==t)fs.writeFileSync(file,next);};
+for(const dir of ['hub','assets/lang']){const walk=d=>{for(const e of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,e.name);if(e.isDirectory())walk(p);else if(/\.(js|json|html)$/.test(e.name))rebrand(p);}};if(fs.existsSync(path.join(root,dir)))walk(path.join(root,dir));}
+rebrand(path.join(root,'index.html'));rebrand(path.join(root,'release.json'));
+const dragSource=path.resolve('cadcraft-studio/hub/window-drag.js');if(fs.existsSync(dragSource))fs.copyFileSync(dragSource,path.join(root,'hub/window-drag.js'));
+const run=(cmd,argv)=>{const r=spawnSync(cmd,argv,{encoding:'utf8'});if(r.status!==0)throw Error(cmd+': '+r.stderr);return (r.stdout||'')+(r.stderr||'');};
+const sign=run('/usr/bin/codesign',['--force','--deep','--sign','-',out]);
+const verify=run('/usr/bin/codesign',['--verify','--deep','--strict','--verbose=2',out]);
+const after={executable:sha(baselineExecutable),detailcraftIndex:sha(baselineIndex)};
+if(JSON.stringify(before)!==JSON.stringify(after))throw Error('Baseline changed unexpectedly');
+const record={displayName,baselineIdentifier,nativeWindowFocus,icon:{source:icon,sha256:sha(icon),bundleFile:iconFile},nativeExecutable:{name:displayName,sha256:sha(nativeTarget)},baseline,edition,out,replacementExecutable:replacementExecutable?{path:replacementExecutable,sha256:sha(replacementExecutable)}:null,baselineBefore:before,baselineAfter:after,sign,verify,identity:'Compiled identifier unchanged; close baseline Studio before launching staged bundle to avoid single-instance redirection.',launchPerformed:false,fullSuiteRepack:false,notes:'Official source browser edition packed independently, then integrated into preserved0.8.1 suite without shared-asset deduplication. All eight baseline apps remain available. Original .app is untouched rollback.'};
+fs.writeFileSync(path.join(path.dirname(out),'staged-bundle.json'),JSON.stringify(record,null,2)+'\n');
+console.log(JSON.stringify(record,null,2));

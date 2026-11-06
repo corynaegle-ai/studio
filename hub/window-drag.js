@@ -19,7 +19,7 @@
 import { MIME, Shelf, cleanOffer, chooseKind, offerJson, dropPoint } from './drag.js';
 import { putHandoff, takeHandoff, dropHandoff, newHandoffId } from './handoff.js';
 
-const NAMES = { cadcraft: 'CadCraft', bimcraft: 'BimCraft', modelcraft: 'ModelCraft', markupcraft: 'MarkupCraft', takeoffcraft: 'TakeoffCraft', civilcraft: 'CivilCraft', detailcraft: 'DetailCraft', partcraft: 'PartCraft' };
+const NAMES = { cadcraft: 'CadCraft', bimcraft: 'BimCraft', modelcraft: 'ModelCraft', markupcraft: 'MarkupCraft', takeoffcraft: 'TakeoffCraft', civilcraft: 'CivilCraft', detailcraft: 'SteleFab', partcraft: 'PartCraft' };
 const appName = (slug) => NAMES[slug] || slug;
 
 export function createDrag({ doc = document, win = window, channel, app, T = (k) => k, fill = (s) => s }) {
