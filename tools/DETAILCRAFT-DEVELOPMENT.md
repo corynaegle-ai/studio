@@ -1,6 +1,6 @@
-# DetailCraft source-to-desktop development
+# SteleFab source-to-desktop development
 
-Run these commands from the steel workspace root (`/Users/cory.naegle/projects/steel`). This route builds the public DetailCraft source independently, integrates its static browser edition into a separate copy of the existing Studio app, and leaves the working baseline unchanged. It does not require the private getcadcraft.com site checkout or recompile Rust for JavaScript/settings changes.
+Run these commands from the steel workspace root (`/Users/cory.naegle/projects/steel`). Use an isolated worktree at a reviewed commit from `https://github.com/corynaegle-ai/stelefab-app.git`. This route builds that source independently, integrates its static browser edition into a separate copy of the existing Studio app, and leaves the working baseline unchanged. It does not require the private getcadcraft.com site checkout or recompile Rust for JavaScript/settings changes.
 
 ## Prerequisites
 
@@ -8,6 +8,7 @@ Run these commands from the steel workspace root (`/Users/cory.naegle/projects/s
 - PHP8.1+ (installed with `HOMEBREW_NO_AUTO_UPDATE=1 /opt/homebrew/bin/brew install php`; observed PHP8.5.12, Homebrew8.5.12_1). No PHP service is started.
 - Source checkout `cadcraft-detailcraft` and baseline suite `cadcraft-studio/out/studio-suite/v0.8.1`.
 - Existing macOS bundle `cadcraft-desktop-shell/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/CadCraft Studio.app`.
+- A reviewed branded native executable built from the intended committed desktop-shell source. Set `STELEFAB_NATIVE_EXECUTABLE` to its absolute path. For an app-only rebuild, an existing accepted executable may be reused with its source/build provenance recorded; a native-source change requires a new native build. The stager deliberately refuses SteleFab without this input.
 - macOS `codesign` and `PlistBuddy`.
 
 ## Build and stage
@@ -18,12 +19,12 @@ Use fresh output directories; builders refuse to overwrite existing candidates.
 node cadcraft-studio/tools/seed-detailcraft-vendor.mjs
 PHP_BIN=/opt/homebrew/bin/php node cadcraft-studio/tools/build-detailcraft-edition.mjs --out work/runtime-integration/pilot-units-3
 node cadcraft-studio/tools/check-detailcraft-edition.mjs --edition work/runtime-integration/pilot-units-3/edition/detailcraft-browser-edition-vdev --report work/runtime-integration/pilot-units-3/dependency-audit.json
-node cadcraft-studio/tools/stage-detailcraft-macos.mjs --edition work/runtime-integration/pilot-units-3/edition/detailcraft-browser-edition-vdev --out 'work/runtime-integration/pilot-units-3/DetailCraft Pilot Studio.app'
+node cadcraft-studio/tools/stage-detailcraft-macos.mjs --edition work/runtime-integration/pilot-units-3/edition/detailcraft-browser-edition-vdev --executable "${STELEFAB_NATIVE_EXECUTABLE:?Set the reviewed branded native executable path}" --out work/runtime-integration/pilot-units-3/SteleFab.app
 ```
 
 The vendor seeder copies existing suite bytes only when size and SHA256 match the source checkout's `devshell/vendor.json`. Unneeded cpython-wasi files are absent from the suite; that does not affect the DetailCraft edition. The builder runs the official `devshell/edition.mjs` with `--offline`, so unexpected missing libraries stop the build. If a future source needs missing vendors, run its official `devshell/fetch-vendor.mjs` for that library, which verifies expected hashes.
 
-The builder snapshots `app/`, `devshell/` and notices before packing. It records source HEAD/status, working-tree patch, snapshot input hashes and packaging recovery provenance. Current untracked app modules are captured in the snapshot and hash manifest even though `git diff` does not include them.
+The builder snapshots `app/`, `devshell/` and notices before packing. It records source HEAD/status, working-tree patch, snapshot input hashes and packaging recovery provenance. Historical recovery snapshots also captured untracked modules. New feature handoffs must commit all owned source and tests before review/merge; a snapshot alone is not a Git checkpoint.
 
 ## Bounded upstream packaging corrections
 
