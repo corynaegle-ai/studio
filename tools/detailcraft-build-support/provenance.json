@@ -1,0 +1,18 @@
+{
+  "retrieved_date": "2026-11-05",
+  "license": "Apache-2.0; per-file SPDX and repository LICENSE",
+  "files": [
+    {
+      "name": "app-addons-account.js",
+      "url": "https://getcadcraft.com/assets/js/app-addons-account.js",
+      "sha256": "d8de9253a687e4b8300aa8159864c08076c8d49d45276503b9b2b44b64fdab5a",
+      "changes": "none"
+    },
+    {
+      "name": "app-devices-studio.js",
+      "url": "https://getcadcraft.com/assets/js/app-devices-studio.js",
+      "sha256": "edabfa6d33f970ed8000ed413a1cea7162ebf0db5e9d794d6aa8c8ab68149c76",
+      "changes": "none"
+    }
+  ]
+}

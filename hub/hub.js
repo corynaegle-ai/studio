@@ -374,7 +374,7 @@ const GROUP_WORD = { read: () => t('assist.group.read'), edit: () => t('assist.g
 
 function wireAssistants() {
   if (!desk || !desk.control || typeof desk.control.onRequest !== 'function') return;
-  relay = createControlRelay({ channel, activityLog, onDisconnect: (sid) => { assistSessions.delete(sid); desk.control.dropSession(sid).catch(() => {}); },
+  relay = createControlRelay({ channel, activityLog, nativeWindows: desk.windows || null, onDisconnect: (sid) => { assistSessions.delete(sid); desk.control.dropSession(sid).catch(() => {}); },
     // skill packs, prompt starters and the firm's standards (AC.14): read from the kept file on every call, so an edit applies at once
     mount: (d, o) => mountPacks(d, { packs: PACKS, enabled: o.enabled, standards: { get: () => standardsKept.get(), text: standardsText } }) });
   desk.control.onRequest((message, session, reply) => {
