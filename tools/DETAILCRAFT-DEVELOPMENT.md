@@ -15,11 +15,15 @@ Run these commands from the steel workspace root (`/Users/cory.naegle/projects/s
 
 Use fresh output directories; builders refuse to overwrite existing candidates.
 
+Set `APP_SOURCE` and `STUDIO_SOURCE` to the reviewed app and Studio worktree directories. Set `STELEFAB_BASELINE_APP` to the preserved baseline bundle and `STELEFAB_ICON` to the reviewed desktop-shell ICNS file. Record their commit/build identities with the candidate. These are explicit inputs, so the recipe never falls back to the dirty originals.
+
 ```sh
-node cadcraft-studio/tools/seed-detailcraft-vendor.mjs
-PHP_BIN=/opt/homebrew/bin/php node cadcraft-studio/tools/build-detailcraft-edition.mjs --out work/runtime-integration/pilot-units-3
-node cadcraft-studio/tools/check-detailcraft-edition.mjs --edition work/runtime-integration/pilot-units-3/edition/detailcraft-browser-edition-vdev --report work/runtime-integration/pilot-units-3/dependency-audit.json
-node cadcraft-studio/tools/stage-detailcraft-macos.mjs --edition work/runtime-integration/pilot-units-3/edition/detailcraft-browser-edition-vdev --executable "${STELEFAB_NATIVE_EXECUTABLE:?Set the reviewed branded native executable path}" --out work/runtime-integration/pilot-units-3/SteleFab.app
+: "${APP_SOURCE:?Set the reviewed app worktree}" "${STUDIO_SOURCE:?Set the reviewed Studio worktree}"
+: "${STELEFAB_NATIVE_EXECUTABLE:?Set the reviewed branded executable}" "${STELEFAB_BASELINE_APP:?Set the preserved baseline bundle}" "${STELEFAB_ICON:?Set the reviewed ICNS path}"
+node "$STUDIO_SOURCE/tools/seed-detailcraft-vendor.mjs" "$APP_SOURCE" cadcraft-studio/out/studio-suite/v0.8.1
+PHP_BIN=/opt/homebrew/bin/php node "$STUDIO_SOURCE/tools/build-detailcraft-edition.mjs" --source "$APP_SOURCE" --suite cadcraft-studio/out/studio-suite/v0.8.1 --out work/runtime-integration/pilot-units-3
+node "$STUDIO_SOURCE/tools/check-detailcraft-edition.mjs" --edition work/runtime-integration/pilot-units-3/edition/detailcraft-browser-edition-vdev --report work/runtime-integration/pilot-units-3/dependency-audit.json
+node "$STUDIO_SOURCE/tools/stage-detailcraft-macos.mjs" --edition work/runtime-integration/pilot-units-3/edition/detailcraft-browser-edition-vdev --baseline "$STELEFAB_BASELINE_APP" --hub-source "$STUDIO_SOURCE/hub/hub.js" --icon "$STELEFAB_ICON" --executable "$STELEFAB_NATIVE_EXECUTABLE" --out work/runtime-integration/pilot-units-3/SteleFab.app
 ```
 
 The vendor seeder copies existing suite bytes only when size and SHA256 match the source checkout's `devshell/vendor.json`. Unneeded cpython-wasi files are absent from the suite; that does not affect the DetailCraft edition. The builder runs the official `devshell/edition.mjs` with `--offline`, so unexpected missing libraries stop the build. If a future source needs missing vendors, run its official `devshell/fetch-vendor.mjs` for that library, which verifies expected hashes.

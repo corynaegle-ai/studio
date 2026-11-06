@@ -9,6 +9,7 @@ const baseline=path.resolve(opt('--baseline','cadcraft-desktop-shell/src-tauri/t
 const edition=path.resolve(opt('--edition','work/runtime-integration/candidate-2/edition/detailcraft-browser-edition-vdev'));
 const out=path.resolve(opt('--out','work/runtime-integration/SteleFab.app'));
 const displayName=opt('--display-name','SteleFab');
+const hubSource=path.resolve(opt('--hub-source','cadcraft-studio/hub/hub.js'));
 if(!/^[A-Za-z][A-Za-z0-9 -]{0,60}$/.test(displayName))throw Error('Invalid display name');
 const icon=path.resolve(opt('--icon','cadcraft-desktop-shell/assets/stelefab/icons/icon.icns'));
 if(!fs.statSync(icon).isFile())throw Error('Missing branded ICNS');
@@ -52,7 +53,7 @@ const hostSources=fs.existsSync(appVersions)?fs.readdirSync(appVersions).map(v=>
 if(hostSources.length>1)throw Error('Ambiguous packed host source for native-focus overlay');
 let nativeWindowFocus={available:false,reason:'Legacy edition has no maintained native-focus extension'};
 if(hostSources.length===1&&fs.readFileSync(hostSources[0],'utf8').includes('// BEGIN maintained-native-window-focus')){
- const hubSource=path.resolve(opt('--hub-source','cadcraft-studio/hub/hub.js')),hostTarget=path.join(root,'hub/host.js'),hubTarget=path.join(root,'hub/hub.js');
+ const hostTarget=path.join(root,'hub/host.js'),hubTarget=path.join(root,'hub/hub.js');
  const overlay=nativeFocusOverlay({host:fs.readFileSync(hostTarget,'utf8'),hub:fs.readFileSync(hubTarget,'utf8'),sourceHost:fs.readFileSync(hostSources[0],'utf8'),sourceHub:fs.readFileSync(hubSource,'utf8')});
  fs.writeFileSync(hostTarget,overlay.host);fs.writeFileSync(hubTarget,overlay.hub);
  nativeWindowFocus={available:true,sourceHost:hostSources[0],sourceHub:hubSource,...overlay.provenance};
@@ -61,7 +62,7 @@ if(hostSources.length===1&&fs.readFileSync(hostSources[0],'utf8').includes('// B
 const rebrand=(file)=>{let t=fs.readFileSync(file,'utf8');let next=t.replaceAll('DetailCraft',displayName).replaceAll('CadCraft Studio',displayName);if(next!==t)fs.writeFileSync(file,next);};
 for(const dir of ['hub','assets/lang']){const walk=d=>{for(const e of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,e.name);if(e.isDirectory())walk(p);else if(/\.(js|json|html)$/.test(e.name))rebrand(p);}};if(fs.existsSync(path.join(root,dir)))walk(path.join(root,dir));}
 rebrand(path.join(root,'index.html'));rebrand(path.join(root,'release.json'));
-const dragSource=path.resolve('cadcraft-studio/hub/window-drag.js');if(fs.existsSync(dragSource))fs.copyFileSync(dragSource,path.join(root,'hub/window-drag.js'));
+const dragSource=path.join(path.dirname(hubSource),'window-drag.js');if(fs.existsSync(dragSource))fs.copyFileSync(dragSource,path.join(root,'hub/window-drag.js'));
 const run=(cmd,argv)=>{const r=spawnSync(cmd,argv,{encoding:'utf8'});if(r.status!==0)throw Error(cmd+': '+r.stderr);return (r.stdout||'')+(r.stderr||'');};
 const sign=run('/usr/bin/codesign',['--force','--deep','--sign','-',out]);
 const verify=run('/usr/bin/codesign',['--verify','--deep','--strict','--verbose=2',out]);
